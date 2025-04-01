@@ -276,10 +276,10 @@ String getChartScript() {
             data: {
               labels: l,
               datasets: [
-                {label:'Taupunkt Innen', data:tdIn, borderColor:'green', fill:false},
-                {label:'Taupunkt Außen', data:tdOut, borderColor:'blue', fill:false},
-                {label:'Differenz', data:diff, borderColor:'orange', fill:false},
-                {label:'Schwellwert', data:Array(l.length).fill(SCHWELLWERT), borderDash:[5,5], borderColor:'grey', fill:false}
+                {label:'Taupunkt Innen', data:tdIn, borderColor:'green', borderWidth: 2, fill: false, pointStyle: 'line'},
+                {label:'Taupunkt Außen', data:tdOut, borderColor:'blue', borderWidth: 2, fill: false, pointStyle: 'line},
+                {label:'Differenz', data:diff, borderColor:'orange', borderWidth: 2, fill: false, pointStyle: 'line},
+                {label:'Schwellwert', data:Array(l.length).fill(SCHWELLWERT), borderDash:[5,5], borderColor:'grey', borderWidth: 2, fill: false, pointStyle: 'line}
               ]
             },
             options: {responsive:true}
@@ -290,8 +290,8 @@ String getChartScript() {
             data: {
               labels: l,
               datasets: [
-                {label:'RH Innen', data:rhIn, borderColor:'teal', fill:false},
-                {label:'RH Außen', data:rhOut, borderColor:'purple', fill:false}
+                {label:'RH Innen', data:rhIn, borderColor:'teal', borderWidth: 2, fill: false, pointStyle: 'line},
+                {label:'RH Außen', data:rhOut, borderColor:'purple', borderWidth: 2, fill: false, pointStyle: 'line}
               ]
             },
             options: {responsive:true}
