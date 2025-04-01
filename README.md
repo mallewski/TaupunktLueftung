@@ -1,4 +1,19 @@
-# TaupunktLueftung
-TaupunktLüftung ist ein ESP32-basiertes System zur automatisierten Lüftungssteuerung auf Basis des Taupunktdifferenz-Prinzips. Ideal zum gezielten Trocknen feuchter Räume wie Keller, Waschküchen oder Vorratsräume – ohne zusätzliche Sensorik in der Außenluft.
+**TaupunktLueftung
 
-Über Webinterface, MQTT und Echtzeitdiagramme lässt sich die Lüftung effizient und intelligent steuern, basierend auf Innen- und Außentemperatur sowie Luftfeuchtigkeit. Die Lüftung wird nur dann aktiviert, wenn tatsächlich getrocknet und nicht befeuchtet wird.
+TaupunktLueftung ist ein ESP32-basiertes System zur intelligenten Lüftungssteuerung auf Grundlage der Taupunktdifferenz. Es ist ideal zum gezielten Trocknen feuchter Räume wie Keller, Waschküchen oder Vorratskammern – effizient und vollautomatisch.
+
+Das System misst Temperatur und Luftfeuchtigkeit innen (über z. B. SHT31) und außen (über DHT22 oder MQTT), berechnet daraus die Taupunkte und aktiviert die Lüftung nur dann, wenn trocknende Bedingungen vorliegen – also wenn die Außenluft in der Lage ist, Feuchtigkeit aufzunehmen, statt sie einzutragen.
+
+Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup mit zwei Lüftern: einer zieht trockene Luft hinein, der andere führt feuchte Luft ab. Dadurch entsteht ein effektiver Luftstrom zum gezielten Entfeuchten.
+
+Features:
+
+Steuerung über Webinterface mit Live-Datenanzeige und Echtzeitdiagrammen
+
+Optionaler Zugriff und Integration via MQTT
+
+Modularer Aufbau: interne Sensoren oder externe MQTT-Daten
+
+Algorithmus zur Taupunktanalyse steuert die Lüftung je nach Differenz
+
+Unterstützt Firmware-Updates über das Webinterface (OTA)
