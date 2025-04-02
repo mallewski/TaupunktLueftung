@@ -9,6 +9,7 @@
 #include <DHT.h>
 #include <PubSubClient.h>
 #include <time.h>
+#include <Update.h>
 
 #define NAME "TaupunktLueftung"
 #define FIRMWARE_VERSION "v1.6"
@@ -47,6 +48,7 @@ String mqttPublishPrefix = "esp32/innen/";
 String modus_innen = "hardware";
 String modus_aussen = "hardware";
 bool mqttAktiv = true;
+bool updateModeActive = false;
 
 float t_in = NAN, rh_in = NAN, td_in = NAN;
 float t_out = NAN, rh_out = NAN, td_out = NAN;
@@ -276,13 +278,23 @@ String getChartScript() {
             data: {
               labels: l,
               datasets: [
-                {label:'Taupunkt Innen', data:tdIn, borderColor:'green', borderWidth: 2, fill: false, pointStyle: 'line'},
-                {label:'Taupunkt Außen', data:tdOut, borderColor:'blue', borderWidth: 2, fill: false, pointStyle: 'line},
-                {label:'Differenz', data:diff, borderColor:'orange', borderWidth: 2, fill: false, pointStyle: 'line},
-                {label:'Schwellwert', data:Array(l.length).fill(SCHWELLWERT), borderDash:[5,5], borderColor:'grey', borderWidth: 2, fill: false, pointStyle: 'line}
+                {label:'Taupunkt Innen', data:tdIn, borderColor:'green', borderWidth: 2, fill: false, pointStyle: 'dash'},
+                {label:'Taupunkt Außen', data:tdOut, borderColor:'blue', borderWidth: 2, fill: false, pointStyle: 'dash'},
+                {label:'Differenz', data:diff, borderColor:'orange', borderWidth: 2, fill: false, pointStyle: 'dash'},
+                {label:'Schwellwert', data:Array(l.length).fill(SCHWELLWERT), borderDash:[5,5], borderColor:'grey', borderWidth: 2, fill: false, pointStyle: 'dash'}
               ]
             },
-            options: {responsive:true}
+            options: {
+              responsive: true,
+              plugins: {
+                legend: {
+                  labels: {
+                    usePointStyle: true,
+                    pointStyle: 'line'
+                  }
+                }
+              }
+            }
           });
 
           chart_humidity = new Chart(document.getElementById('chart_humidity'), {
@@ -290,13 +302,22 @@ String getChartScript() {
             data: {
               labels: l,
               datasets: [
-                {label:'RH Innen', data:rhIn, borderColor:'teal', borderWidth: 2, fill: false, pointStyle: 'line},
-                {label:'RH Außen', data:rhOut, borderColor:'purple', borderWidth: 2, fill: false, pointStyle: 'line}
+                {label:'RH Innen', data:rhIn, borderColor:'teal', borderWidth: 2, fill: false, pointStyle: 'dash'},
+                {label:'RH Außen', data:rhOut, borderColor:'purple', borderWidth: 2, fill: false, pointStyle: 'dash'}
               ]
             },
-            options: {responsive:true}
+            options: {
+              responsive: true,
+              plugins: {
+                legend: {
+                  labels: {
+                    usePointStyle: true,
+                    pointStyle: 'line'
+                  }
+                }
+              }
+            }
           });
-
           chart_status = new Chart(document.getElementById('chart_status'), {
             type: 'bar',
             data: {
@@ -328,7 +349,7 @@ String getChartScript() {
           chart_status.update();
         }
       }
-      setInterval(updateLiveData, 1000); // jede Sekunde
+      setInterval(updateLiveData, 5000); // jede Sekunde
       setInterval(updateChart, 5000);    // alle 5 Sekunden
 
       window.onload = () => {
@@ -352,8 +373,82 @@ String getChartScript() {
           console.error("Fehler beim Live-Datenabruf:", e);
         }
       }
+      function confirmFirmwareUpdate() {
+        if (confirm("⚠️ Firmware-Update vorbereiten?\n\n- MQTT wird beendet\n- Lüftung deaktiviert\n\nFortfahren?")) {
+          window.location.href = "/updateform";
+        }
+      }
     </script>
   )rawliteral";
+}
+
+void handleCSS() {
+  String css = R"rawliteral(
+    body {
+      font-family: Arial, sans-serif;
+      background: #f8f9fa;
+      margin: 20px;
+    }
+    h1 {
+      color: #007bff;
+    }
+    canvas {
+      background: white;
+      border: 1px solid #ccc;
+      margin-bottom: 20px;
+    }
+    form {
+      margin: 20px 0;
+    }
+
+    /* Einheitlicher Button-Stil */
+    button,
+    input[type="submit"],
+    select {
+      padding: 10px 15px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 1em;
+      cursor: pointer;
+    }
+
+    button:hover,
+    input[type="submit"]:hover,
+    select:hover {
+      background-color: #0056b3;
+    }
+
+    /* Dropdown-Pfeil */
+    select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='16'%20height='16'%20viewBox='0%200%2020%2020'%3E%3Cpolygon%20points='0,0%2020,0%2010,10'%20style='fill:white;'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 30px;
+    }
+
+    /* Links als Buttons */
+    a.button-link {
+      display: inline-block;
+      padding: 10px 15px;
+      background-color: #007bff;
+      color: white;
+      text-decoration: none;
+      border-radius: 5px;
+      font-size: 1em;
+      border: none;
+      text-align: center;
+    }
+
+    a.button-link:hover {
+      background-color: #0056b3;
+    }
+  )rawliteral";
+  server.send(200, "text/css", css);
 }
 
 void handleRoot() {
@@ -361,6 +456,7 @@ void handleRoot() {
   String script = getChartScript();
   script.replace("%SCHWELLE%", String(taupunktDifferenzSchwellwert));
   html += script;
+  html += "<link rel='stylesheet' href='/style.css'>";
   html += "<h1>" + String(NAME) + " Dashboard</h1>";
   html += "<div id='live'><p><strong>Zeit:</strong> <span id='zeit'></span><br>";
   html += "<strong>Innen:</strong> <span id='t_in'></span>°C, <span id='rh_in'></span>%<br>";
@@ -385,10 +481,58 @@ void handleRoot() {
          (modus_aussen == "mqtt" ? " selected" : "") +
          ">MQTT</option></select><br>";
   html += "<input type='submit' value='Modus speichern'></form>";
-  html += "<p><a href='/mqttconfig'>MQTT-Konfiguration ändern</a></p>";
-  html += "<p><a href='/mqtttopics'>MQTT-Topic-Zuweisung ändern</a></p>";
+  html += "<p><a class='button-link' href='/mqttconfig'>MQTT-Konfiguration ändern</a></p>";
+  html += "<p><a class='button-link' href='/mqtttopics'>MQTT-Topic-Zuweisung ändern</a></p>";
+  html += "<p><a class='button-link' href='/updateform'>Firmware-Update durchführen</a></p>";
   html += "</body></html>";
   server.send(200, "text/html", html);
+}
+
+void handleFirmwareUpload() {
+  HTTPUpload& upload = server.upload();
+  if (upload.status == UPLOAD_FILE_START) {
+    Serial.printf("Update: %s\n", upload.filename.c_str());
+    if (!Update.begin()) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      Serial.printf("Update abgeschlossen: %u Bytes\n", upload.totalSize);
+    } else {
+      Update.printError(Serial);
+    }
+  }
+}
+
+void prepareForFirmwareUpdate() {
+  mqttClient.disconnect();         // MQTT sicher trennen
+  mqttAktiv = false;
+  // Optionale Flags:
+  updateModeActive = true;        // Setze in der loop() oder beim Lesen Checks wie: if (updateModeActive) return;
+  logEvent("Firmware-Update vorbereitet. Dienste deaktiviert.");
+}
+
+void handleUpdateForm() {
+  server.send(200, "text/html", R"rawliteral(
+    <html><head><meta charset='UTF-8'><title>Firmware-Update</title></head><body>
+    <h2>Firmware-Update durchführen</h2>
+    <p style='color:red;'><strong>⚠️ Hinweis:</strong> Während des Updates wird MQTT getrennt und die Steuerung pausiert.</p>
+    <form method='POST' action='/update' enctype='multipart/form-data' onsubmit="return confirmUpdate();">
+      <input type='file' name='firmware' required><br><br>
+      <input type='submit' value='Upload & Update'>
+    </form>
+    <p><a href='/'>Zurück</a></p>
+    <script>
+      function confirmUpdate() {
+        return confirm("Firmware-Update vorbereiten?\n\n- MQTT wird getrennt\n- Sensorlogik pausiert\n\nJetzt fortfahren?");
+      }
+    </script>
+    </body></html>
+  )rawliteral");
 }
 
 void handleMQTTConfig() {
@@ -483,6 +627,19 @@ void setup() {
   server.on("/mqttconfig", handleMQTTConfig);
   server.on("/chartdata", handleChartData);
   server.on("/livedata", handleLiveData);
+  server.on("/style.css", handleCSS);
+  server.on("/updateform", HTTP_GET, handleUpdateForm);
+  server.on("/update", HTTP_POST, []() {
+    server.sendHeader("Connection", "close");
+    if (Update.hasError()) {
+      server.send(200, "text/plain", "Update fehlgeschlagen.");
+    } else {
+      server.sendHeader("Refresh", "5; url=/");
+      server.send(200, "text/html", "<html><body><h3>Update erfolgreich.</h3><p>Neustart...</p></body></html>");
+    }
+    delay(1000);
+    ESP.restart();
+  }, handleFirmwareUpload);
   server.begin();
   Serial.println("[OK] Webserver gestartet.");
 }
@@ -491,6 +648,7 @@ void loop() {
   if (mqttAktiv && !mqttClient.connected()) reconnectMQTT();
   if (mqttAktiv) mqttClient.loop();
   server.handleClient();
+  if (updateModeActive) return;
 
   static unsigned long lastUpdate = 0;
   if (millis() - lastUpdate >= 1000) { // alle 2 Sekunden
