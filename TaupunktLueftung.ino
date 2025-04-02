@@ -401,51 +401,51 @@ void handleCSS() {
       margin: 20px 0;
     }
 
-    /* Einheitlicher Button-Stil */
+  /* Einheitlicher Stil für alle Buttons und Submit-Elemente */
     button,
     input[type="submit"],
-    select {
-      padding: 10px 15px;
-      background: #007bff;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      font-size: 1em;
-      cursor: pointer;
-    }
-
-    button:hover,
-    input[type="submit"]:hover,
-    select:hover {
-      background-color: #0056b3;
-    }
-
-    /* Dropdown-Pfeil */
-    select {
-      appearance: none;
-      -webkit-appearance: none;
-      -moz-appearance: none;
-      background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='16'%20height='16'%20viewBox='0%200%2020%2020'%3E%3Cpolygon%20points='0,0%2020,0%2010,10'%20style='fill:white;'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 10px center;
-      padding-right: 30px;
-    }
-
-    /* Links als Buttons */
-    a.button-link {
+    .button-link {
       display: inline-block;
-      padding: 10px 15px;
+      padding: 5px 10px;
       background-color: #007bff;
       color: white;
       text-decoration: none;
       border-radius: 5px;
       font-size: 1em;
       border: none;
+      cursor: pointer;
+      margin: 5px 5px 5px 0;
+    }
+
+    button:hover,
+    input[type="submit"]:hover,
+    .button-link:hover {
+      background-color: #0056b3;
+    }
+
+    /* Links als Buttons */
+    a.button-link {
       text-align: center;
     }
 
-    a.button-link:hover {
-      background-color: #0056b3;
+    /* Dropdowns im gleichen Stil */
+    select {
+      padding: 5px 10;
+      font-size: 1em;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      background-color: white;
+      margin: 5px 0;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+    }
+
+    /* Optional: Ein leichtes Shadow für Dropdowns */
+    select:focus {
+      outline: none;
+      border-color: #007bff;
+      box-shadow: 0 0 3px #007bff55;
     }
   )rawliteral";
   server.send(200, "text/css", css);
@@ -518,14 +518,14 @@ void prepareForFirmwareUpdate() {
 
 void handleUpdateForm() {
   server.send(200, "text/html", R"rawliteral(
-    <html><head><meta charset='UTF-8'><title>Firmware-Update</title></head><body>
+    <html><head><meta charset='UTF-8'><title>Firmware-Update</title><link rel='stylesheet' href='/style.css'></head><body>
     <h2>Firmware-Update durchführen</h2>
     <p style='color:red;'><strong>⚠️ Hinweis:</strong> Während des Updates wird MQTT getrennt und die Steuerung pausiert.</p>
     <form method='POST' action='/update' enctype='multipart/form-data' onsubmit="return confirmUpdate();">
       <input type='file' name='firmware' required><br><br>
       <input type='submit' value='Upload & Update'>
     </form>
-    <p><a href='/'>Zurück</a></p>
+    <p><a href='/'class='button-link'>Zurück</a></p>
     <script>
       function confirmUpdate() {
         return confirm("Firmware-Update vorbereiten?\n\n- MQTT wird getrennt\n- Sensorlogik pausiert\n\nJetzt fortfahren?");
@@ -534,7 +534,7 @@ void handleUpdateForm() {
     </body></html>
   )rawliteral");
 }
-
+R5263560
 void handleMQTTConfig() {
   if (server.method() == HTTP_POST) {
     if (server.hasArg("server")) strncpy(mqttServer, server.arg("server").c_str(), sizeof(mqttServer));
@@ -544,12 +544,12 @@ void handleMQTTConfig() {
     saveMQTTSettings(); loadMQTTSettings(); reconnectMQTT();
     server.sendHeader("Location", "/"); server.send(303); return;
   }
-  String html = "<html><head><meta charset='UTF-8'><title>MQTT Setup</title></head><body><h2>MQTT Setup</h2><form method='POST'>";
+  String html = "<html><head><meta charset='UTF-8'><title>MQTT Setup</title><link rel='stylesheet' href='/style.css'></head><body><h2>MQTT Setup</h2><form method='POST'>";
   html += "Server: <input name='server' value='" + String(mqttServer) + "'><br>";
   html += "Port: <input name='port' value='" + String(mqttPort) + "'><br>";
   html += "Benutzer: <input name='user' value='" + String(mqttUser) + "'><br>";
   html += "Passwort: <input type='password' name='pass' value='" + String(mqttPassword) + "'><br>";
-  html += "<input type='submit' value='Speichern'></form><a href='/'>Zurück</a></body></html>";
+  html += "<input type='submit' value='Speichern'></form><a href='/'class='button-link'>Zurück</a></body></html>";
   server.send(200, "text/html", html);
 }
 
@@ -562,7 +562,7 @@ void handleMQTTTopics() {
     saveMQTTTopics(); resubscribeMQTTTopics();
     server.sendHeader("Location", "/"); server.send(303); return;
   }
-  String html = "<html><head><meta charset='UTF-8'><title>MQTT Topics</title></head><body><h2>MQTT Topic-Zuweisung</h2><form method='POST'>";
+  String html = "<html><head><meta charset='UTF-8'><title>MQTT Topics</title><link rel='stylesheet' href='/style.css'></head><body><h2>MQTT Topic-Zuweisung</h2><form method='POST'>";
   html += "Innen Temperatur: <input name='temp_innen' value='" + mqttTempInnen + "'><br>";
   html += "Innen Feuchte: <input name='hygro_innen' value='" + mqttHygroInnen + "'><br>";
   html += "Außen Temperatur: <input name='temp_aussen' value='" + mqttTempAussen + "'><br>";
