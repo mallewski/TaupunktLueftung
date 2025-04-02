@@ -1,4 +1,4 @@
-// TaupunktLueftungBuddy v1.6
+// TaupunktLueftung v1.6
 // Vollständige Version mit Chart-Update via AJAX, MQTT-Setup, LED-Steuerung, Webinterface
 
 #include <Wire.h>
@@ -10,6 +10,7 @@
 #include <PubSubClient.h>
 #include <time.h>
 
+#define NAME "TaupunktLueftung"
 #define FIRMWARE_VERSION "v1.6"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
@@ -157,7 +158,6 @@ void steuerlogik() {
   rh_out_history[history_index] = rh_out;
   status_history[history_index] = lueftungAktiv;
   history_index = (history_index + 1) % MAX_POINTS;
-
 }
 
 void handleChartData() {
@@ -245,7 +245,7 @@ void reconnectMQTT() {
   if (!mqttAktiv) return;
   while (!mqttClient.connected()) {
     Serial.print("MQTT verbinden mit: "); Serial.println(mqttServer);
-    if (mqttClient.connect("TaupunktBuddy", mqttUser, mqttPassword)) {
+    if (mqttClient.connect(NAME, mqttUser, mqttPassword)) {
       resubscribeMQTTTopics();
       Serial.println("MQTT verbunden.");
     } else {
@@ -357,11 +357,11 @@ String getChartScript() {
 }
 
 void handleRoot() {
-  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>TaupunktBuddy</title>";
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" + String(NAME) + "</title>";
   String script = getChartScript();
   script.replace("%SCHWELLE%", String(taupunktDifferenzSchwellwert));
   html += script;
-  html += "<h1>TaupunktLüftungBuddy</h1>";
+  html += "<h1>" + String(NAME) + " Dashboard</h1>";
   html += "<div id='live'><p><strong>Zeit:</strong> <span id='zeit'></span><br>";
   html += "<strong>Innen:</strong> <span id='t_in'></span>°C, <span id='rh_in'></span>%<br>";
   html += "<strong>Außen:</strong> <span id='t_out'></span>°C, <span id='rh_out'></span>%<br>";
