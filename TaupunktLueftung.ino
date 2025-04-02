@@ -19,7 +19,7 @@
 #define STATUS_YELLOW_PIN 19
 #define DHTPIN 17
 #define DHTTYPE DHT22
-#define MAX_POINTS 50
+#define MAX_POINTS 720
 
 Preferences prefs;
 WebServer server(80);
@@ -49,6 +49,8 @@ String modus_innen = "hardware";
 String modus_aussen = "hardware";
 bool mqttAktiv = true;
 bool updateModeActive = false;
+bool schutzVorAuskuehlungAktiv = false;
+float minTempInnen = 12.0; // °C – Beispielwert
 
 float t_in = NAN, rh_in = NAN, td_in = NAN;
 float t_out = NAN, rh_out = NAN, td_out = NAN;
@@ -167,11 +169,18 @@ void handleChartData() {
   for (int i = 0; i < MAX_POINTS; i++) {
     int idx = (history_index + i) % MAX_POINTS;
     json += "{";
-    json += "\"td_in\":" + String(td_in_history[idx], 2) + ",";
-    json += "\"td_out\":" + String(td_out_history[idx], 2) + ",";
-    json += "\"diff\":" + String(td_diff_history[idx], 2) + ",";
-    json += "\"rh_in\":" + String(rh_in_history[idx], 1) + ",";
-    json += "\"rh_out\":" + String(rh_out_history[idx], 1) + ","; 
+    auto f2 = [](float val) {
+      return isnan(val) || isinf(val) ? "null" : String(val, 2);
+    };
+    auto f1 = [](float val) {
+      return isnan(val) || isinf(val) ? "null" : String(val, 1);
+    };
+
+    json += "\"td_in\":" + f2(td_in_history[idx]) + ",";
+    json += "\"td_out\":" + f2(td_out_history[idx]) + ",";
+    json += "\"diff\":" + f2(td_diff_history[idx]) + ",";
+    json += "\"rh_in\":" + f1(rh_in_history[idx]) + ",";
+    json += "\"rh_out\":" + f1(rh_out_history[idx]) + ",";
     json += "\"status\":" + String(status_history[idx] ? 1 : 0);
     json += "}";
     if (i < MAX_POINTS - 1) json += ",";
@@ -267,10 +276,18 @@ String getChartScript() {
       async function updateChart() {
         let r = await fetch('/chartdata');
         let d = await r.json();
-        let l = d.map((_,i)=>i);
-        let tdIn = d.map(p=>p.td_in), tdOut = d.map(p=>p.td_out), diff = d.map(p=>p.diff);
-        let rhIn = d.map(p=>p.rh_in), rhOut = d.map(p=>p.rh_out);
-        let status = d.map(p=>p.status);
+        let rangeInHours = parseFloat(document.getElementById('rangeSelector').value);
+        let pointsPerHour = 60 * 60 / 5; // 1 Punkt alle 5 Sek → 720 Punkte/Stunde
+        let totalPoints = Math.floor(rangeInHours * pointsPerHour);
+        let recentData = d.slice(-totalPoints);
+
+        let l = recentData.map((_, i) => i);
+        let tdIn = recentData.map(p => p.td_in);
+        let tdOut = recentData.map(p => p.td_out);
+        let diff = recentData.map(p => p.diff);
+        let rhIn = recentData.map(p => p.rh_in);
+        let rhOut = recentData.map(p => p.rh_out);
+        let status = recentData.map(p => p.status);
 
         if (!chart) {
           chart = new Chart(document.getElementById('chart'), {
@@ -278,10 +295,11 @@ String getChartScript() {
             data: {
               labels: l,
               datasets: [
-                {label:'Taupunkt Innen', data:tdIn, borderColor:'green', borderWidth: 2, fill: false, pointStyle: 'dash'},
-                {label:'Taupunkt Außen', data:tdOut, borderColor:'blue', borderWidth: 2, fill: false, pointStyle: 'dash'},
-                {label:'Differenz', data:diff, borderColor:'orange', borderWidth: 2, fill: false, pointStyle: 'dash'},
-                {label:'Schwellwert', data:Array(l.length).fill(SCHWELLWERT), borderDash:[5,5], borderColor:'grey', borderWidth: 2, fill: false, pointStyle: 'dash'}
+                { label: 'Taupunkt Innen', data: tdIn, borderColor: 'green', borderWidth: 2, fill: false, pointRadius: 0 },
+                { label: 'Taupunkt Außen', data: tdOut, borderColor: 'blue', borderWidth: 2, fill: false, pointRadius: 0 },
+                { label: 'Differenz', data: diff, borderColor: 'orange', borderWidth: 2, fill: false, pointRadius: 0 },
+                { label: 'Schwellwert', data: Array(l.length).fill(SCHWELLWERT), borderDash: [5, 5], borderColor: 'grey', borderWidth: 2, fill: false, pointRadius: 0 },
+                { label: 'Schwellwert -', data: Array(l.length).fill(-SCHWELLWERT), borderDash: [5, 5], borderColor: 'grey', borderWidth: 2, fill: false, pointRadius: 0 }
               ]
             },
             options: {
@@ -302,8 +320,8 @@ String getChartScript() {
             data: {
               labels: l,
               datasets: [
-                {label:'RH Innen', data:rhIn, borderColor:'teal', borderWidth: 2, fill: false, pointStyle: 'dash'},
-                {label:'RH Außen', data:rhOut, borderColor:'purple', borderWidth: 2, fill: false, pointStyle: 'dash'}
+                { label: 'RH Innen', data: rhIn, borderColor: 'teal', borderWidth: 2, fill: false, pointRadius: 0 },
+                { label: 'RH Außen', data: rhOut, borderColor: 'purple', borderWidth: 2, fill: false, pointRadius: 0 }
               ]
             },
             options: {
@@ -318,6 +336,7 @@ String getChartScript() {
               }
             }
           });
+
           chart_status = new Chart(document.getElementById('chart_status'), {
             type: 'bar',
             data: {
@@ -325,17 +344,25 @@ String getChartScript() {
               datasets: [{
                 label: 'Lüftung',
                 data: status,
-                backgroundColor: status.map(s => s===1 ? 'rgba(0,200,0,0.6)' : 'rgba(200,0,0,0.3)')
+                backgroundColor: status.map(s => s === 1 ? 'rgba(0,200,0,0.6)' : 'rgba(0,200,0,0.6)')
               }]
             },
-            options: {responsive:true, scales:{y:{beginAtZero:true,max:1}}}
+            options: {
+              responsive: true,
+              scales: {
+                y: { beginAtZero: true, max: 1 }
+              }
+            }
           });
+
         } else {
+          // Nur Daten aktualisieren – keine Objekte neu erstellen
           chart.data.labels = l;
           chart.data.datasets[0].data = tdIn;
           chart.data.datasets[1].data = tdOut;
           chart.data.datasets[2].data = diff;
           chart.data.datasets[3].data = Array(l.length).fill(SCHWELLWERT);
+          chart.data.datasets[4].data = Array(l.length).fill(-SCHWELLWERT);
           chart.update();
 
           chart_humidity.data.labels = l;
@@ -345,7 +372,7 @@ String getChartScript() {
 
           chart_status.data.labels = l;
           chart_status.data.datasets[0].data = status;
-          chart_status.data.datasets[0].backgroundColor = status.map(s => s===1 ? 'rgba(0,200,0,0.6)' : 'rgba(200,0,0,0.3)');
+          chart_status.data.datasets[0].backgroundColor = status.map(s => s === 1 ? 'rgba(0,200,0,0.6)' : 'rgba(0,0,0,0)');
           chart_status.update();
         }
       }
@@ -465,28 +492,96 @@ void handleRoot() {
   html += "<strong>Taupunkt außen:</strong> <span id='td_out'></span>°C</p></div>";
   html += "<p><strong>Status:</strong> <span id='status_text'></span></p>";
   html += "<p><strong>Letztes Ereignis:</strong> " + logEintrag + "</p>";
+  html += "<form id='rangeForm' onsubmit='return false;'>"
+        "<label><strong>Zeitraum:</strong></label> "
+        "<select id='rangeSelector' onchange='updateChart()'>"
+        "<option value='0.1'>10 Minuten</option>"
+        "<option value='0.5'>30 Minuten</option>"
+        "<option value='1'>1 Stunden</option>"
+        "</select>"
+        "</form>";
   html += "<canvas id='chart' width='400' height='100'></canvas>";
-  html += "<canvas id='chart_humidity' width='400' height='100'></canvas>";
+  html += "<canvas id='chart_humidity' width='400' height='70'></canvas>";
   html += "<canvas id='chart_status' width='400' height='30'></canvas>";
-  html += "<form action='/setMQTT' method='POST'><input type='submit' name='mqtt' value='MQTT aktivieren'> <input type='submit' name='mqtt' value='MQTT deaktivieren'></form>";
-  html += "<form action='/setModus' method='POST'>";
-  html += String("Modus innen: <select name='modus_innen'><option value='hardware'") +
-         (modus_innen == "hardware" ? " selected" : "") +
-         ">Hardware</option><option value='mqtt'" +
-         (modus_innen == "mqtt" ? " selected" : "") +
-         ">MQTT</option></select><br>";
-  html += String("Modus außen: <select name='modus_aussen'><option value='hardware'") +
-         (modus_aussen == "hardware" ? " selected" : "") +
-         ">Hardware</option><option value='mqtt'" +
-         (modus_aussen == "mqtt" ? " selected" : "") +
-         ">MQTT</option></select><br>";
-  html += "<input type='submit' value='Modus speichern'></form>";
-  html += "<p><a class='button-link' href='/mqttconfig'>MQTT-Konfiguration ändern</a></p>";
-  html += "<p><a class='button-link' href='/mqtttopics'>MQTT-Topic-Zuweisung ändern</a></p>";
-  html += "<p><a class='button-link' href='/updateform'>Firmware-Update durchführen</a></p>";
+  html += "<p><a class='button-link' href='/settings'>Einstellungen</a></p>";
   html += "</body></html>";
   server.send(200, "text/html", html);
 }
+
+void handleSettingsPage() {
+  bool mqttAktivLocal = mqttAktiv;
+
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Einstellungen</title>";
+  html += "<link rel='stylesheet' href='/style.css'></head><body>";
+  html += "<h1>Einstellungen</h1>";
+
+  // Temperaturschutz
+  html += "<fieldset><legend>Temperaturschutz</legend>";
+  html += "<form method='POST' action='/tempschutz'>";
+  html += "<label><input type='checkbox' name='aktiv'";
+  if (schutzVorAuskuehlungAktiv) html += " checked";
+  html += "> Aktivieren</label><span width='20'</span>";
+  html += "Mindest-Innentemperatur (°C): <input type='number' step='0.1' name='min_temp' value='" + String(minTempInnen, 1) + "'><br>";
+  html += "<input type='submit' value='Speichern'></form></fieldset>";
+
+  // Sensorquelle (Modus)
+  html += "<fieldset><legend>Sensorquelle</legend>";
+  bool disabled = !mqttAktivLocal;
+  if (disabled) html += "<p style='color:gray;'>MQTT ist deaktiviert – Auswahl gesperrt.</p>";
+  html += "<form method='POST' action='/setModus'>";
+  html += "Modus innen: <select name='modus_innen'";
+  if (disabled) html += " disabled";
+  html += ">";
+  html += String("<option value='hardware'") + (modus_innen == "hardware" ? " selected" : "") + ">Hardware</option>";
+  html += String("<option value='mqtt'") + (modus_innen == "mqtt" ? " selected" : "") + ">MQTT</option>";
+  html += "</select><br>";
+  html += "Modus außen: <select name='modus_aussen'";
+  if (disabled) html += " disabled";
+  html += ">";
+  html += String("<option value='hardware'") + (modus_aussen == "hardware" ? " selected" : "") + ">Hardware</option>";
+  html += String("<option value='mqtt'") + (modus_aussen == "mqtt" ? " selected" : "") + ">MQTT</option>";
+  html += "</select><br>";
+  html += "<input type='submit' value='Modus speichern'";
+  if (disabled) html += " disabled";
+  html += "></form>";
+  html += "</fieldset>";
+  // MQTT Einstellungen
+  html += "<fieldset><legend>MQTT</legend>";
+  // MQTT Setup
+  html += "<form method='POST' action='/mqttconfig'>";
+  html += "Server: <input name='server' value='" + String(mqttServer) + "'><br>";
+  html += "Port: <input name='port' value='" + String(mqttPort) + "'><br>";
+  html += "Benutzer: <input name='user' value='" + String(mqttUser) + "'><br>";
+  html += "Passwort: <input type='password' name='pass' value='" + String(mqttPassword) + "'><br>";
+  html += "<input type='submit' value='MQTT-Verbindung speichern'></form>";
+  // MQTT Topics
+  html += "<form method='POST' action='/mqtttopics'>";
+  html += "Innen Temperatur: <input name='temp_innen' value='" + mqttTempInnen + "'><br>";
+  html += "Innen Feuchte: <input name='hygro_innen' value='" + mqttHygroInnen + "'><br>";
+  html += "Außen Temperatur: <input name='temp_aussen' value='" + mqttTempAussen + "'><br>";
+  html += "Außen Feuchte: <input name='hygro_aussen' value='" + mqttHygroAussen + "'><br>";
+  html += "<input type='submit' value='MQTT Topics speichern'></form>";
+
+    // MQTT Aktivieren/Deaktivieren
+  html += "<form action='/setMQTT' method='POST'>";
+  html += "<input type='submit' name='mqtt' value='MQTT aktivieren'> ";
+  html += "<input type='submit' name='mqtt' value='MQTT deaktivieren'>";
+  html += "</form>";
+
+  html += "</fieldset>";
+
+  // Firmware-Update
+  html += "<fieldset><legend>Firmware</legend>";
+  html += "<p><a class='button-link' href='/updateform'>Firmware-Update durchführen</a></p>";
+  html += "</fieldset>";
+
+  html += "<p><a href='/' class='button-link'>Zurück zum Dashboard</a></p>";
+  html += "</body></html>";
+
+  server.send(200, "text/html", html);
+}
+
+
 
 void handleFirmwareUpload() {
   HTTPUpload& upload = server.upload();
@@ -525,7 +620,7 @@ void handleUpdateForm() {
       <input type='file' name='firmware' required><br><br>
       <input type='submit' value='Upload & Update'>
     </form>
-    <p><a href='/'class='button-link'>Zurück</a></p>
+    <p><a href='/settings'class='button-link'>Zurück</a></p>
     <script>
       function confirmUpdate() {
         return confirm("Firmware-Update vorbereiten?\n\n- MQTT wird getrennt\n- Sensorlogik pausiert\n\nJetzt fortfahren?");
@@ -534,7 +629,31 @@ void handleUpdateForm() {
     </body></html>
   )rawliteral");
 }
-R5263560
+
+void handleTempSchutz() {
+  if (server.method() == HTTP_POST) {
+    schutzVorAuskuehlungAktiv = server.hasArg("aktiv") && server.arg("aktiv") == "on";
+    minTempInnen = server.arg("min_temp").toFloat();
+    prefs.begin("config", false);
+    prefs.putBool("tempschutz", schutzVorAuskuehlungAktiv);
+    prefs.putFloat("min_temp", minTempInnen);
+    prefs.end();
+    server.sendHeader("Location", "/");
+    server.send(303);
+    return;
+  }
+
+  String html = "<html><head><meta charset='UTF-8'><title>Temperaturschutz</title></head><body>";
+  html += "<h2>Schutz vor Auskühlung</h2><form method='POST'>";
+  html += "<label><input type='checkbox' name='aktiv'";
+  if (schutzVorAuskuehlungAktiv) html += " checked";
+  html += "> Aktivieren</label><br>";
+  html += "Mindest-Innentemperatur (°C): <input type='number' step='0.1' name='min_temp' value='" + String(minTempInnen, 1) + "'><br><br>";
+  html += "<input type='submit' value='Speichern'></form>";
+  html += "<p><a class='button-link' href='/'>Zurück</a></p></body></html>";
+  server.send(200, "text/html", html);
+}
+
 void handleMQTTConfig() {
   if (server.method() == HTTP_POST) {
     if (server.hasArg("server")) strncpy(mqttServer, server.arg("server").c_str(), sizeof(mqttServer));
@@ -613,6 +732,8 @@ void setup() {
   modus_innen = prefs.getString("modus_innen", "hardware");
   modus_aussen = prefs.getString("modus_aussen", "hardware");
   mqttAktiv = prefs.getBool("mqtt", true);
+  schutzVorAuskuehlungAktiv = prefs.getBool("tempschutz", false);
+  minTempInnen = prefs.getFloat("min_temp", 12.0);
   prefs.end();
 
   loadMQTTSettings(); loadMQTTTopics();
@@ -628,7 +749,9 @@ void setup() {
   server.on("/chartdata", handleChartData);
   server.on("/livedata", handleLiveData);
   server.on("/style.css", handleCSS);
+  server.on("/tempschutz", handleTempSchutz);
   server.on("/updateform", HTTP_GET, handleUpdateForm);
+  server.on("/settings", handleSettingsPage);
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
     if (Update.hasError()) {
@@ -651,7 +774,7 @@ void loop() {
   if (updateModeActive) return;
 
   static unsigned long lastUpdate = 0;
-  if (millis() - lastUpdate >= 1000) { // alle 2 Sekunden
+  if (millis() - lastUpdate >= 5000) { // alle 5 Sekunden
     lastUpdate = millis();
     aktualisiereSensoren();
     steuerlogik();
