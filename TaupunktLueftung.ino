@@ -641,19 +641,21 @@ void handleRoot() {
   html += R"rawliteral(
     <script>
       function showTab(tab) {
-        const dashboard = document.getElementById('dashboardTab');
-        const settings = document.getElementById('settingsTab');
-
-        // Wenn der Tab wechselt UND das Modal offen ist → schließe es
-        if ((tab === 'dashboard' && !dashboard.classList.contains('hidden')) ||
-            (tab === 'settings' && !settings.classList.contains('hidden'))) {
-          closeFirmwareModal();
-        }
-
-        dashboard.classList.add('hidden');
-        settings.classList.add('hidden');
+        document.getElementById('dashboardTab').classList.add('hidden');
+        document.getElementById('settingsTab').classList.add('hidden');
         document.getElementById(tab + 'Tab').classList.remove('hidden');
+        localStorage.setItem("activeTab", tab);
+
+        // Firmware-Modal sicher schließen
+        closeFirmwareModal();
       }
+
+      window.onload = () => {
+        const savedTab = localStorage.getItem("activeTab") || "dashboard";
+        showTab(savedTab);
+        updateLiveData();
+        updateChart();
+      };
     </script>
   )rawliteral";
   html += R"rawliteral(
@@ -757,7 +759,7 @@ void handleSetMQTT() {
     prefs.end();
     if (mqttAktiv) reconnectMQTT();
   }
-  server.sendHeader("Location", "/"); server.send(303);
+  server.sendHeader("Location", "/#settings"); server.send(303);
 }
 
 void setup() {
