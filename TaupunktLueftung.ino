@@ -402,7 +402,6 @@ String getChartScript() {
       }
       function confirmFirmwareUpdate() {
         if (confirm("⚠️ Firmware-Update vorbereiten?\n\n- MQTT wird beendet\n- Lüftung deaktiviert\n\nFortfahren?")) {
-          window.location.href = "/updateform";
         }
       }
     </script>
@@ -467,12 +466,50 @@ void handleCSS() {
       -webkit-appearance: none;
       -moz-appearance: none;
     }
-
     /* Optional: Ein leichtes Shadow für Dropdowns */
     select:focus {
       outline: none;
       border-color: #007bff;
       box-shadow: 0 0 3px #007bff55;
+    }
+    .modal.hidden {
+      display: none !important;
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 50px;
+      height: 24px;
+      margin-left: 10px;
+    }
+    .switch input { display: none; }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      background-color: #ccc;
+      border-radius: 24px;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      transition: 0.4s;
+    }
+    .slider:before {
+      content: "";
+      position: absolute;
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      border-radius: 50%;
+      transition: 0.4s;
+    }
+    input:checked + .slider {
+      background-color: #007bff;
+    }
+    input:checked + .slider:before {
+      transform: translateX(26px);
     }
   )rawliteral";
   server.send(200, "text/css", css);
@@ -482,9 +519,23 @@ void handleRoot() {
   String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" + String(NAME) + "</title>";
   String script = getChartScript();
   script.replace("%SCHWELLE%", String(taupunktDifferenzSchwellwert));
+  html.replace("%MQTT_CHECKED%", mqttAktiv ? "checked" : "");
   html += script;
   html += "<link rel='stylesheet' href='/style.css'>";
-  html += "<h1>" + String(NAME) + " Dashboard</h1>";
+  html += "<style>.hidden{display:none;}";
+  html += ".modal{position:fixed;top:0;left:0;width:100%;height:100%;z-index:1000;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;}";
+  html += ".modal-content{background:#fff;padding:20px;border-radius:10px;max-width:400px;width:90%;box-shadow:0 0 10px #000;position:relative;}";
+  html += ".close{position:absolute;top:10px;right:15px;font-size:1.5em;cursor:pointer;}";
+  html += "</style>";
+  html += "</head><body>";
+  html += "<h1>" + String(NAME) + " Interface</h1>";
+
+  // Tab Buttons
+  html += "<p><button onclick=\"showTab('dashboard')\">Dashboard</button>";
+  html += "<button onclick=\"showTab('settings')\">Einstellungen</button></p>";
+
+  // ===== Dashboard Section =====
+  html += "<div id='dashboardTab'>";
   html += "<div id='live'><p><strong>Zeit:</strong> <span id='zeit'></span><br>";
   html += "<strong>Innen:</strong> <span id='t_in'></span>°C, <span id='rh_in'></span>%<br>";
   html += "<strong>Außen:</strong> <span id='t_out'></span>°C, <span id='rh_out'></span>%<br>";
@@ -493,40 +544,34 @@ void handleRoot() {
   html += "<p><strong>Status:</strong> <span id='status_text'></span></p>";
   html += "<p><strong>Letztes Ereignis:</strong> " + logEintrag + "</p>";
   html += "<form id='rangeForm' onsubmit='return false;'>"
-        "<label><strong>Zeitraum:</strong></label> "
-        "<select id='rangeSelector' onchange='updateChart()'>"
-        "<option value='0.1'>10 Minuten</option>"
-        "<option value='0.5'>30 Minuten</option>"
-        "<option value='1'>1 Stunden</option>"
-        "</select>"
-        "</form>";
+          "<label><strong>Zeitraum:</strong></label> "
+          "<select id='rangeSelector' onchange='updateChart()'>"
+          "<option value='0.1'>10 Minuten</option>"
+          "<option value='0.5'>30 Minuten</option>"
+          "<option value='1'>1 Stunden</option>"
+          "</select>"
+          "</form>";
   html += "<canvas id='chart' width='400' height='100'></canvas>";
   html += "<canvas id='chart_humidity' width='400' height='70'></canvas>";
   html += "<canvas id='chart_status' width='400' height='30'></canvas>";
-  html += "<p><a class='button-link' href='/settings'>Einstellungen</a></p>";
-  html += "</body></html>";
-  server.send(200, "text/html", html);
-}
+  html += "</div>";
 
-void handleSettingsPage() {
-  bool mqttAktivLocal = mqttAktiv;
-
-  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Einstellungen</title>";
-  html += "<link rel='stylesheet' href='/style.css'></head><body>";
-  html += "<h1>Einstellungen</h1>";
+  // ===== Einstellungen Section =====
+  html += "<div id='settingsTab' class='hidden'>";
+  html += "<h2>Einstellungen</h2>";
 
   // Temperaturschutz
   html += "<fieldset><legend>Temperaturschutz</legend>";
   html += "<form method='POST' action='/tempschutz'>";
   html += "<label><input type='checkbox' name='aktiv'";
   if (schutzVorAuskuehlungAktiv) html += " checked";
-  html += "> Aktivieren</label><span width='20'</span>";
+  html += "> Aktivieren</label><br>";
   html += "Mindest-Innentemperatur (°C): <input type='number' step='0.1' name='min_temp' value='" + String(minTempInnen, 1) + "'><br>";
   html += "<input type='submit' value='Speichern'></form></fieldset>";
 
-  // Sensorquelle (Modus)
+  // Sensorquelle
   html += "<fieldset><legend>Sensorquelle</legend>";
-  bool disabled = !mqttAktivLocal;
+  bool disabled = !mqttAktiv;
   if (disabled) html += "<p style='color:gray;'>MQTT ist deaktiviert – Auswahl gesperrt.</p>";
   html += "<form method='POST' action='/setModus'>";
   html += "Modus innen: <select name='modus_innen'";
@@ -543,49 +588,132 @@ void handleSettingsPage() {
   html += "</select><br>";
   html += "<input type='submit' value='Modus speichern'";
   if (disabled) html += " disabled";
-  html += "></form>";
-  html += "</fieldset>";
-  // MQTT Einstellungen
+  html += "></form></fieldset>";
+
+  // MQTT Konfiguration
   html += "<fieldset><legend>MQTT</legend>";
-  // MQTT Setup
   html += "<form method='POST' action='/mqttconfig'>";
   html += "Server: <input name='server' value='" + String(mqttServer) + "'><br>";
   html += "Port: <input name='port' value='" + String(mqttPort) + "'><br>";
   html += "Benutzer: <input name='user' value='" + String(mqttUser) + "'><br>";
   html += "Passwort: <input type='password' name='pass' value='" + String(mqttPassword) + "'><br>";
-  html += "<input type='submit' value='MQTT-Verbindung speichern'></form>";
-  // MQTT Topics
+  html += "<input type='submit' value='MQTT-Verbindung speichern'></form><br>";
+
   html += "<form method='POST' action='/mqtttopics'>";
   html += "Innen Temperatur: <input name='temp_innen' value='" + mqttTempInnen + "'><br>";
   html += "Innen Feuchte: <input name='hygro_innen' value='" + mqttHygroInnen + "'><br>";
   html += "Außen Temperatur: <input name='temp_aussen' value='" + mqttTempAussen + "'><br>";
   html += "Außen Feuchte: <input name='hygro_aussen' value='" + mqttHygroAussen + "'><br>";
-  html += "<input type='submit' value='MQTT Topics speichern'></form>";
+  html += "<input type='submit' value='MQTT Topics speichern'></form><br>";
 
-    // MQTT Aktivieren/Deaktivieren
-  html += "<form action='/setMQTT' method='POST'>";
-  html += "<input type='submit' name='mqtt' value='MQTT aktivieren'> ";
-  html += "<input type='submit' name='mqtt' value='MQTT deaktivieren'>";
-  html += "</form>";
+  html += "<form method='POST' action='/setMQTT'>";
+  html += "<label for='mqtt_toggle'>MQTT:</label>";
+  html += "<input type='hidden' name='mqtt' value=''>";
+  html += "<label class='switch'>";
+  html += "<input type='checkbox' name='mqtt_toggle' id='mqtt_toggle' onchange=\"this.form.mqtt.value=this.checked?'MQTT aktivieren':'MQTT deaktivieren'; this.form.submit();\" ";
+  html += mqttAktiv ? "checked" : "";
+  html += ">";
+  html += "<span class='slider round'></span>";
+  html += "</label></form>";
+  html += "</form></fieldset>";
 
-  html += "</fieldset>";
-
-  // Firmware-Update
+  // Firmware
   html += "<fieldset><legend>Firmware</legend>";
-  html += "<p><a class='button-link' href='/updateform'>Firmware-Update durchführen</a></p>";
+  html += "<p><button onclick='openFirmwareModal()'>Firmware-Update durchführen</button></p>";
   html += "</fieldset>";
 
-  html += "<p><a href='/' class='button-link'>Zurück zum Dashboard</a></p>";
-  html += "</body></html>";
+  // Firmware-Modal (versteckt)
+  html += R"rawliteral(
+  <div id="firmwareModal" class="modal hidden">
+    <div class="modal-content">
+      <span class="close" onclick="closeFirmwareModal()">&times;</span>
+      <h3>Firmware-Update durchführen</h3>
+      <p style="color:red;"><strong>⚠️ Achtung:</strong> MQTT wird getrennt, Steuerung pausiert.</p>
+      <form method="POST" action="/update" enctype="multipart/form-data" onsubmit="return confirmFirmwareUpdate();">
+        <input type="file" name="firmware" required><br><br>
+        <input type="submit" value="Upload & Update">
+      </form>
+    </div>
+  </div>
+  )rawliteral";
+  html += "</div>"; // settingsTab
+  // Tab-Script
+  html += R"rawliteral(
+    <script>
+      function showTab(tab) {
+        const dashboard = document.getElementById('dashboardTab');
+        const settings = document.getElementById('settingsTab');
 
+        // Wenn der Tab wechselt UND das Modal offen ist → schließe es
+        if ((tab === 'dashboard' && !dashboard.classList.contains('hidden')) ||
+            (tab === 'settings' && !settings.classList.contains('hidden'))) {
+          closeFirmwareModal();
+        }
+
+        dashboard.classList.add('hidden');
+        settings.classList.add('hidden');
+        document.getElementById(tab + 'Tab').classList.remove('hidden');
+      }
+    </script>
+  )rawliteral";
+  html += R"rawliteral(
+  <script>
+    function openFirmwareModal() {
+      const modal = document.getElementById("firmwareModal");
+      modal.classList.remove("hidden");
+
+      // Nur EINMAL registrieren
+      if (!openFirmwareModal.listenerAdded) {
+        document.addEventListener("keydown", escCloseModal);
+        document.addEventListener("click", outsideClickModal);
+        openFirmwareModal.listenerAdded = true;
+      }
+    }
+    function closeFirmwareModal() {
+      const modal = document.getElementById("firmwareModal");
+      modal.classList.add("hidden");
+
+      // Listener entfernen
+      if (openFirmwareModal.listenerAdded) {
+        document.removeEventListener("keydown", escCloseModal);
+        document.removeEventListener("click", outsideClickModal);
+        openFirmwareModal.listenerAdded = false;
+      }
+    }
+    function escCloseModal(e) {
+      if (e.key === "Escape") closeFirmwareModal();
+    }
+    function outsideClickModal(e) {
+      const modal = document.getElementById("firmwareModal");
+      const modalContent = document.querySelector(".modal-content");
+
+      // Nur wenn das Modal auch wirklich sichtbar ist:
+      if (!modal.classList.contains("hidden") && !modalContent.contains(e.target)) {
+        closeFirmwareModal();
+      }
+    }
+    function confirmFirmwareUpdate() {
+      const go = confirm("⚠️ Firmware-Update vorbereiten?\n\n- MQTT wird getrennt\n- Sensorlogik pausiert\n\nJetzt fortfahren?");
+      if (go) {
+        // Dienste abschalten bereits im Backend (prepareForFirmwareUpdate)
+        closeFirmwareModal(); // UI bereinigen
+        return true;
+      } else {
+        return false;
+      }
+    }
+  </script>
+  )rawliteral";
+  html += "</body></html>";
   server.send(200, "text/html", html);
 }
 
-
-
 void handleFirmwareUpload() {
   HTTPUpload& upload = server.upload();
+
   if (upload.status == UPLOAD_FILE_START) {
+    prepareForFirmwareUpdate(); // <<< Hier aktivieren wir den Stop-Modus
+
     Serial.printf("Update: %s\n", upload.filename.c_str());
     if (!Update.begin()) {
       Update.printError(Serial);
@@ -609,85 +737,6 @@ void prepareForFirmwareUpdate() {
   // Optionale Flags:
   updateModeActive = true;        // Setze in der loop() oder beim Lesen Checks wie: if (updateModeActive) return;
   logEvent("Firmware-Update vorbereitet. Dienste deaktiviert.");
-}
-
-void handleUpdateForm() {
-  server.send(200, "text/html", R"rawliteral(
-    <html><head><meta charset='UTF-8'><title>Firmware-Update</title><link rel='stylesheet' href='/style.css'></head><body>
-    <h2>Firmware-Update durchführen</h2>
-    <p style='color:red;'><strong>⚠️ Hinweis:</strong> Während des Updates wird MQTT getrennt und die Steuerung pausiert.</p>
-    <form method='POST' action='/update' enctype='multipart/form-data' onsubmit="return confirmUpdate();">
-      <input type='file' name='firmware' required><br><br>
-      <input type='submit' value='Upload & Update'>
-    </form>
-    <p><a href='/settings'class='button-link'>Zurück</a></p>
-    <script>
-      function confirmUpdate() {
-        return confirm("Firmware-Update vorbereiten?\n\n- MQTT wird getrennt\n- Sensorlogik pausiert\n\nJetzt fortfahren?");
-      }
-    </script>
-    </body></html>
-  )rawliteral");
-}
-
-void handleTempSchutz() {
-  if (server.method() == HTTP_POST) {
-    schutzVorAuskuehlungAktiv = server.hasArg("aktiv") && server.arg("aktiv") == "on";
-    minTempInnen = server.arg("min_temp").toFloat();
-    prefs.begin("config", false);
-    prefs.putBool("tempschutz", schutzVorAuskuehlungAktiv);
-    prefs.putFloat("min_temp", minTempInnen);
-    prefs.end();
-    server.sendHeader("Location", "/");
-    server.send(303);
-    return;
-  }
-
-  String html = "<html><head><meta charset='UTF-8'><title>Temperaturschutz</title></head><body>";
-  html += "<h2>Schutz vor Auskühlung</h2><form method='POST'>";
-  html += "<label><input type='checkbox' name='aktiv'";
-  if (schutzVorAuskuehlungAktiv) html += " checked";
-  html += "> Aktivieren</label><br>";
-  html += "Mindest-Innentemperatur (°C): <input type='number' step='0.1' name='min_temp' value='" + String(minTempInnen, 1) + "'><br><br>";
-  html += "<input type='submit' value='Speichern'></form>";
-  html += "<p><a class='button-link' href='/'>Zurück</a></p></body></html>";
-  server.send(200, "text/html", html);
-}
-
-void handleMQTTConfig() {
-  if (server.method() == HTTP_POST) {
-    if (server.hasArg("server")) strncpy(mqttServer, server.arg("server").c_str(), sizeof(mqttServer));
-    if (server.hasArg("port")) mqttPort = server.arg("port").toInt();
-    if (server.hasArg("user")) strncpy(mqttUser, server.arg("user").c_str(), sizeof(mqttUser));
-    if (server.hasArg("pass")) strncpy(mqttPassword, server.arg("pass").c_str(), sizeof(mqttPassword));
-    saveMQTTSettings(); loadMQTTSettings(); reconnectMQTT();
-    server.sendHeader("Location", "/"); server.send(303); return;
-  }
-  String html = "<html><head><meta charset='UTF-8'><title>MQTT Setup</title><link rel='stylesheet' href='/style.css'></head><body><h2>MQTT Setup</h2><form method='POST'>";
-  html += "Server: <input name='server' value='" + String(mqttServer) + "'><br>";
-  html += "Port: <input name='port' value='" + String(mqttPort) + "'><br>";
-  html += "Benutzer: <input name='user' value='" + String(mqttUser) + "'><br>";
-  html += "Passwort: <input type='password' name='pass' value='" + String(mqttPassword) + "'><br>";
-  html += "<input type='submit' value='Speichern'></form><a href='/'class='button-link'>Zurück</a></body></html>";
-  server.send(200, "text/html", html);
-}
-
-void handleMQTTTopics() {
-  if (server.method() == HTTP_POST) {
-    mqttTempInnen = server.arg("temp_innen");
-    mqttHygroInnen = server.arg("hygro_innen");
-    mqttTempAussen = server.arg("temp_aussen");
-    mqttHygroAussen = server.arg("hygro_aussen");
-    saveMQTTTopics(); resubscribeMQTTTopics();
-    server.sendHeader("Location", "/"); server.send(303); return;
-  }
-  String html = "<html><head><meta charset='UTF-8'><title>MQTT Topics</title><link rel='stylesheet' href='/style.css'></head><body><h2>MQTT Topic-Zuweisung</h2><form method='POST'>";
-  html += "Innen Temperatur: <input name='temp_innen' value='" + mqttTempInnen + "'><br>";
-  html += "Innen Feuchte: <input name='hygro_innen' value='" + mqttHygroInnen + "'><br>";
-  html += "Außen Temperatur: <input name='temp_aussen' value='" + mqttTempAussen + "'><br>";
-  html += "Außen Feuchte: <input name='hygro_aussen' value='" + mqttHygroAussen + "'><br>";
-  html += "<input type='submit' value='Speichern'></form><a href='/'>Zurück</a></body></html>";
-  server.send(200, "text/html", html);
 }
 
 void handleSetModus() {
@@ -737,7 +786,6 @@ void setup() {
   prefs.end();
 
   loadMQTTSettings(); loadMQTTTopics();
-  server.on("/mqtttopics", handleMQTTTopics);
   mqttClient.setCallback(mqttCallback);
   if (mqttAktiv) reconnectMQTT();
 
@@ -745,21 +793,22 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/setMQTT", handleSetMQTT);
   server.on("/setModus", handleSetModus);
-  server.on("/mqttconfig", handleMQTTConfig);
   server.on("/chartdata", handleChartData);
   server.on("/livedata", handleLiveData);
   server.on("/style.css", handleCSS);
-  server.on("/tempschutz", handleTempSchutz);
-  server.on("/updateform", HTTP_GET, handleUpdateForm);
-  server.on("/settings", handleSettingsPage);
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
-    if (Update.hasError()) {
-      server.send(200, "text/plain", "Update fehlgeschlagen.");
-    } else {
-      server.sendHeader("Refresh", "5; url=/");
-      server.send(200, "text/html", "<html><body><h3>Update erfolgreich.</h3><p>Neustart...</p></body></html>");
-    }
+    server.send(200, "text/html", R"rawliteral(
+      <html><head><meta charset='UTF-8'><title>Update</title><style>
+        body { font-family: sans-serif; background: #f8f9fa; text-align: center; padding: 50px; }
+        .status { font-size: 1.5em; color: #007bff; }
+      </style></head><body>
+      <p class='status'>Firmware-Update erfolgreich.<br>Neustart in wenigen Sekunden...</p>
+      <script>
+        setTimeout(() => window.location.href = "/", 10000);
+      </script>
+      </body></html>
+    )rawliteral");
     delay(1000);
     ESP.restart();
   }, handleFirmwareUpload);
@@ -768,13 +817,18 @@ void setup() {
 }
 
 void loop() {
+  if (updateModeActive) {
+    server.handleClient(); // trotzdem Webserver bedienen!
+    return; // alles andere abbrechen
+  }
+
   if (mqttAktiv && !mqttClient.connected()) reconnectMQTT();
   if (mqttAktiv) mqttClient.loop();
+
   server.handleClient();
-  if (updateModeActive) return;
 
   static unsigned long lastUpdate = 0;
-  if (millis() - lastUpdate >= 5000) { // alle 5 Sekunden
+  if (millis() - lastUpdate >= 5000) {
     lastUpdate = millis();
     aktualisiereSensoren();
     steuerlogik();
