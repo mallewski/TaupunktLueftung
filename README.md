@@ -106,3 +106,23 @@ Für eine effektive Kellerlüftung sind leistungsstarke Ventilatoren erforderlic
 - Zuluft idealerweise aus einem trockeneren Raum oder über eine Außenöffnung mit Insektenschutzgitter
 - Mehrere Ventilatoren (z. B. ein Zuluft- und ein Abluftventilator) können **parallel am gleichen Relaisausgang** betrieben werden, sofern die Gesamtlast das Relais nicht übersteigt (max. ca. 2 A bei 230 V bei handelsüblichen Relaismodulen)
 - Bei höheren Lasten ggf. **ein externes Leistungsrelais oder Schütz** verwenden
+
+
+## Unterstütze das Projekt
+
+Wenn dir dieses Projekt gefällt oder du es nützlich findest, kannst du mir einen Kaffee spendieren:
+
+
+
+<p align="center">
+  <a href="https://www.buymeacoffee.com/mallewski" target="_blank">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60" width="217">
+  </a>
+</p>
+
+
+
+<p align="center">
+  Made with ESP32 and Love!
+</p>
+
