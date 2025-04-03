@@ -850,7 +850,7 @@ String getFirmwareModalHtml() {
       <div class="modal-content">
         <span class="close" onclick="closeFirmwareModal()">&times;</span>
         <h3>Firmware-Update durchführen</h3>
-        <p style="color:red;"><strong>⚠️ Achtung:</strong> MQTT wird getrennt, Steuerung pausiert.</p>
+        <p>Installierte Firmware-Version: " + String(FIRMWARE_VERSION) + "</p>
         <form method="POST" action="/update" enctype="multipart/form-data" onsubmit="return confirmFirmwareUpdate();">
           <input type="file" name="firmware" required><br><br>
           <input type="submit" value="Upload & Update">
