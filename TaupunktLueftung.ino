@@ -546,7 +546,30 @@ String getMainScripts() {
         // Live-Daten + Chart dauerhaft starten – egal welcher Tab
         setInterval(updateLiveData, 5000);
         setInterval(updateChart, 5000);
+        ajaxFormHandler("tempschutzForm", "Temperaturschutz gespeichert.");
+        ajaxFormHandler("modusForm", "Sensor-Modus gespeichert.");
+        ajaxFormHandler("mqttConfigForm", "MQTT-Verbindung gespeichert.");
+        ajaxFormHandler("mqttTopicsForm", "MQTT Topics gespeichert.");
       };
+
+      // ===== AJAX Hilfsfunktion =====
+      function ajaxFormHandler(formId, successMessage = "Gespeichert!") {
+        const form = document.getElementById(formId);
+        if (!form) return;
+
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          const data = new FormData(form);
+          fetch(form.action, {
+            method: "POST",
+            body: new URLSearchParams(data)
+          }).then(() => {
+            alert(successMessage);
+          }).catch(err => {
+            console.error("AJAX-Fehler:", err);
+          });
+        });
+      }
     </script>
   )rawliteral";
 }
@@ -759,7 +782,7 @@ String getSettingsHtml() {
 
   // Temperaturschutz
   html += "<fieldset><legend>Temperaturschutz</legend>";
-  html += "<form method='POST' action='/tempschutz'>";
+  html += "<form id='tempschutzForm' method='POST' action='/tempschutz'>";
   html += "<label><input type='checkbox' name='aktiv'";
   if (schutzVorAuskuehlungAktiv) html += " checked";
   html += "> Aktivieren</label><br>";
@@ -771,7 +794,7 @@ String getSettingsHtml() {
   html += "<fieldset><legend>Sensorquelle</legend>";
   if (disabled) html += "<p id='mqttHinweis' style='color:gray;'>MQTT ist deaktiviert – Auswahl gesperrt.</p>";
   else html += "<p id='mqttHinweis' style='display:none;'></p>";
-  html += "<form method='POST' action='/setModus'>";
+  html += "<form id='modusForm' method='POST' action='/setModus'>";
   html += "Modus innen: <select name='modus_innen'" + String(disabled ? " disabled" : "") + ">";
   html += "<option value='hardware'" + String(modus_innen == "hardware" ? " selected" : "") + ">Hardware</option>";
   html += "<option value='mqtt'" + String(modus_innen == "mqtt" ? " selected" : "") + ">MQTT</option>";
@@ -785,14 +808,14 @@ String getSettingsHtml() {
 
   // MQTT Einstellungen
   html += "<fieldset><legend>MQTT</legend>";
-  html += "<form method='POST' action='/mqttconfig'>";
+  html += "<form id='mqttConfigForm' method='POST' action='/mqttconfig'>";
   html += "Server: <input name='server' value='" + String(mqttServer) + "'><br>";
   html += "Port: <input name='port' value='" + String(mqttPort) + "'><br>";
   html += "Benutzer: <input name='user' value='" + String(mqttUser) + "'><br>";
   html += "Passwort: <input type='password' name='pass' value='" + String(mqttPassword) + "'><br>";
   html += "<input type='submit' value='MQTT-Verbindung speichern'></form><br>";
 
-  html += "<form method='POST' action='/mqtttopics'>";
+  html += "<form id='mqttTopicsForm' method='POST' action='/mqtttopics'>";
   html += "Innen Temperatur: <input name='temp_innen' value='" + mqttTempInnen + "'><br>";
   html += "Innen Feuchte: <input name='hygro_innen' value='" + mqttHygroInnen + "'><br>";
   html += "Außen Temperatur: <input name='temp_aussen' value='" + mqttTempAussen + "'><br>";
