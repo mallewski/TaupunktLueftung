@@ -48,9 +48,26 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 | GPIO2     | LED grün           | Vorwiderstand + LED           |
 | GPIO18    | LED rot            | Vorwiderstand + LED           |
 | GPIO19    | LED gelb           | Vorwiderstand + LED           |
-| SDA/SCL   | I2C                | SHT31 (Innen)                 |
+| GPIO21    | SDA (I2C-Daten)    | SHT31 (Innen)                 |
+| GPIO22    | SCL (I2C-Takt)     | SHT31 (Innen)                 |
 | 3.3 V/GND | Stromversorgung    | Alle Komponenten              |
 
+
+### Vereinfachter ASCII-Schaltplan
+
+            +----------------------------+
+            |         ESP32 Dev          |
+            |                            |
+            |  GPIO17 --> DHT22 (außen)  |
+            |  GPIO16 --> Relais IN      |
+            |  GPIO2  --> LED grün       |
+            |  GPIO18 --> LED rot        |
+            |  GPIO19 --> LED gelb       |
+            |  GPIO21 --> SDA SHT31      |
+            |  GPIO22 --> SCL SHT31      |
+            +-------------+--------------+
+                          |
+                       3.3 V / GND
 
 
 ### Hinweise
@@ -62,3 +79,28 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 - **Webinterface:** Alle Einstellungen wie MQTT, Sensorquellen und Schwellenwerte  
   sind direkt über das Browser-Interface konfigurierbar.
 - **DHT22 Sensor wettergeschützt montieren**, z. B. unter einem Vordach oder in einem geeigneten Gehäuse.
+
+
+### **Ventilatoren**
+
+Für eine effektive Kellerlüftung sind leistungsstarke Ventilatoren erforderlich. Normale PC-Lüfter reichen in der Regel nicht aus.
+
+**Empfehlung:**
+- Verwende **Wandventilatoren** oder **Rohrventilatoren**, z. B. aus dem Bereich der Bad- oder Kellerlüftung
+- Achte auf ausreichenden **Volumenstrom** (mind. 100–150 m³/h für kleine Kellerräume)
+- Ideal: **Abluftventilator** mit Rückschlagklappe
+- Optional: **Zuluftventilator** oder passive Zuluftöffnung (mit Insektenschutzgitter)
+
+| Komponente         | Preis (ca.) | Hinweis                                         |
+|--------------------|-------------|-------------------------------------------------|
+| Rohrventilator 100mm | 25–40 €     | z. B. VENTS, Maico, oder günstige Modelle aus dem Baumarkt |
+| Rückschlagklappe   | 5–10 €      | verhindert Rückströmung                         |
+| Wandgitter / Tellerventil | 5–10 € | schützt Öffnungen vor Schmutz und Tieren       |
+
+**Montagehinweise:**
+- Abluft sollte möglichst **nah an der Kellerdecke** montiert werden, wo sich warme, feuchte Luft sammelt
+- Zuluftöffnung idealerweise **bodennah gegenüberliegend**, um einen sinnvollen Luftstrom durch den Raum zu erzeugen
+- Abluft nach draußen führen – **nicht** in andere Räume
+- Zuluft idealerweise aus einem trockeneren Raum oder über eine Außenöffnung mit Insektenschutzgitter
+- Mehrere Ventilatoren (z. B. ein Zuluft- und ein Abluftventilator) können **parallel am gleichen Relaisausgang** betrieben werden, sofern die Gesamtlast das Relais nicht übersteigt (max. ca. 2 A bei 230 V bei handelsüblichen Relaismodulen)
+- Bei höheren Lasten ggf. **ein externes Leistungsrelais oder Schütz** verwenden
