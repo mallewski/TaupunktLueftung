@@ -68,6 +68,8 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
             +-------------+--------------+
                           |
                        3.3 V / GND
+                       
+LED's: Anode (langer Pin) → Vorwiderstand → GPIO / Kathode (kurzer Pin) → GND
 
 
 ### Hinweise
