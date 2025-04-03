@@ -29,7 +29,7 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 | **ESP32 Dev Board** (z. B. DOIT) | Mikrocontroller mit WLAN                                | 6–10 €        |
 | **SHT31 Sensor (Innen)**         | Temperatur & Luftfeuchte (hochgenau)                    | 5–8 €         |
 | **DHT22 Sensor (Außen)**         | Temperatur & Luftfeuchte (günstiger, für Außenbereich)  | 3–5 €         |
-| **LEDs (3×)** + Vorwiderstände   | Statusanzeigen: grün, gelb, rot                         | 1–2 €         |
+| **LEDs (3×)** + Vorwiderstände (220–470 Ω) | Statusanzeigen: grün, gelb, rot                         | 1–2 €         |
 | **Relais-Modul (1 Kanal)**       | Zur Ansteuerung der Lüftung                             | 2–4 €         |
 | **Jumper-Kabel / Breadboard**    | Für Aufbau und Tests                                    | 2–5 €         |
 | **Gehäuse (optional)**           | Schutz für ESP32 und Verkabelung                        | 3–8 €         |
