@@ -754,10 +754,10 @@ String getDashboardHtml() {
   String html;
   html += "<div id='dashboardTab'>";
   html += "<div id='live'><p><strong>Zeit:</strong> <span id='zeit'></span><br>";
-  html += "<strong>Innen:</strong> <span id='t_in'></span>°C, <span id='rh_in'></span>%<br>";
-  html += "<strong>Außen:</strong> <span id='t_out'></span>°C, <span id='rh_out'></span>%<br>";
-  html += "<strong>Taupunkt innen:</strong> <span id='td_in'></span>°C<br>";
-  html += "<strong>Taupunkt außen:</strong> <span id='td_out'></span>°C</p></div>";
+  html += "<strong>Innen:</strong> <span id='t_in'></span>, <span id='rh_in'></span><br>";
+  html += "<strong>Außen:</strong> <span id='t_out'></span>, <span id='rh_out'></span><br>";
+  html += "<strong>Taupunkt innen:</strong> <span id='td_in'></span><br>";
+  html += "<strong>Taupunkt außen:</strong> <span id='td_out'></span></p></div>";
   html += "<p><strong>Status:</strong> <span id='status_text'></span></p>";
   html += "<p><strong>Letztes Ereignis:</strong> " + logEintrag + "</p>";
   html += "<form id='rangeForm' onsubmit='return false;'>"
