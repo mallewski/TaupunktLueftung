@@ -43,7 +43,7 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 
 | ESP32-Pin | Funktion           | Angeschlossen an             |
 |-----------|--------------------|-------------------------------|
-| GPIO17    | DHT22 Datenleitung | DHT22 (mit 10 kΩ Pull-Up)    |
+| GPIO17    | DHT22 Datenleitung | DHT22 (mit 10 kΩ Pull-Up) auf GND   |
 | GPIO16    | Relais             | Relais IN                     |
 | GPIO2     | LED grün           | Vorwiderstand + LED           |
 | GPIO18    | LED rot            | Vorwiderstand + LED           |
