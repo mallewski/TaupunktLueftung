@@ -10,6 +10,7 @@
 #include <PubSubClient.h>
 #include <time.h>
 #include <Update.h>
+#include "secrets.h"
 
 //Parameter
 #define NAME "TaupunktLueftung"
@@ -31,7 +32,6 @@ PubSubClient mqttClient(espClient);
 Adafruit_SHT31 shtInnen = Adafruit_SHT31();
 DHT dht(DHTPIN, DHTTYPE);
 
-#include "secrets.h"
 
 char ssid[32] = WIFI_SSID;
 char password[64] = WIFI_PASSWORD;
@@ -45,7 +45,9 @@ String mqttTempInnen = "sensors/temp_innen";
 String mqttHygroInnen = "sensors/hygro_innen";
 String mqttTempAussen = "sensors/temp_aussen";
 String mqttHygroAussen = "sensors/hygro_aussen";
-String mqttPublishPrefix = "esp32/innen/";
+String mqttPublishPrefix = "taupunktlueftung/";
+String mqttDiscoveryPrefix = "homeassistant/";
+
 
 String modus_innen = "hardware";
 String modus_aussen = "hardware";
@@ -111,11 +113,27 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) == mqttHygroAussen) mqtt_rh_out = fval;
 }
 
-void publishSensorwerte() {
-  if (!mqttAktiv) return;
-  mqttClient.publish((mqttPublishPrefix + "temp").c_str(), String(t_in, 1).c_str(), true);
-  mqttClient.publish((mqttPublishPrefix + "hygro").c_str(), String(rh_in, 1).c_str(), true);
-  mqttClient.publish((mqttPublishPrefix + "taupunkt").c_str(), String(td_in, 1).c_str(), true);
+void publishAllStates() {
+  if (!mqttAktiv || !mqttClient.connected()) return;
+
+  // Innen
+  mqttClient.publish((mqttPublishPrefix + "temp_innen").c_str(), String(t_in, 1).c_str(), true);
+  mqttClient.publish((mqttPublishPrefix + "hygro_innen").c_str(), String(rh_in, 1).c_str(), true);
+  mqttClient.publish((mqttPublishPrefix + "taupunkt_innen").c_str(), String(td_in, 1).c_str(), true);
+
+  // Außen
+  mqttClient.publish((mqttPublishPrefix + "temp_aussen").c_str(), String(t_out, 1).c_str(), true);
+  mqttClient.publish((mqttPublishPrefix + "hygro_aussen").c_str(), String(rh_out, 1).c_str(), true);
+  mqttClient.publish((mqttPublishPrefix + "taupunkt_aussen").c_str(), String(td_out, 1).c_str(), true);
+
+  // Differenz
+  mqttClient.publish((mqttPublishPrefix + "diff").c_str(), String(td_in - td_out, 1).c_str(), true);
+
+  // Lüftung an/aus
+  mqttClient.publish((mqttPublishPrefix + "status").c_str(), lueftungAktiv ? "1" : "0", true);
+
+  // Availability (optional bei reconnect)
+  mqttClient.publish((mqttPublishPrefix + "availability").c_str(), "online", true);
 }
 
 void aktualisiereSensoren() {
@@ -127,7 +145,7 @@ void aktualisiereSensoren() {
   if (!isnan(t_in) && !isnan(rh_in)) td_in = berechneTaupunkt(t_in, rh_in);
   if (!isnan(t_out) && !isnan(rh_out)) td_out = berechneTaupunkt(t_out, rh_out);
 
-  publishSensorwerte();
+  publishAllStates();
 }
 
 void loadMQTTSettings() {
@@ -159,6 +177,8 @@ void loadMQTTTopics() {
   mqttHygroInnen = prefs.getString("mqtt_rh_in", mqttHygroInnen);
   mqttTempAussen = prefs.getString("mqtt_temp_out", mqttTempAussen);
   mqttHygroAussen = prefs.getString("mqtt_rh_out", mqttHygroAussen);
+  mqttPublishPrefix = prefs.getString("mqtt_pub_prefix", mqttPublishPrefix);
+  mqttDiscoveryPrefix = prefs.getString("mqtt_discovery_prefix", mqttDiscoveryPrefix);
   prefs.end();
 }
 
@@ -168,6 +188,8 @@ void saveMQTTTopics() {
   prefs.putString("mqtt_rh_in", mqttHygroInnen);
   prefs.putString("mqtt_temp_out", mqttTempAussen);
   prefs.putString("mqtt_rh_out", mqttHygroAussen);
+  prefs.putString("mqtt_pub_prefix", mqttPublishPrefix);
+  prefs.putString("mqtt_discovery_prefix", mqttDiscoveryPrefix);
   prefs.end();
 }
 
@@ -184,14 +206,19 @@ void reconnectMQTT() {
   while (!mqttClient.connected()) {
     Serial.print("MQTT verbinden mit: "); Serial.println(mqttServer);
     if (mqttClient.connect(NAME, mqttUser, mqttPassword)) {
+      delay(500);
       resubscribeMQTTTopics();
       Serial.println("MQTT verbunden.");
+      delay(500);
+      publishMQTTDiscovery();
+      mqttClient.publish("homeassistant/status", "online", true);
     } else {
       Serial.print("MQTT-Verbindung fehlgeschlagen. Code: ");
       Serial.println(mqttClient.state());
       break;
     }
   }
+  publishAllStates();
 }
 
 void steuerlogik() {
@@ -219,6 +246,7 @@ void steuerlogik() {
       setLEDs(false, false, true);
       statusText = "Neutral - Lüftung aus";
     }
+    publishAllStates();
   }
 
   td_in_history[history_index] = td_in;
@@ -272,6 +300,67 @@ void handleLiveData() {
   json += "\"status\":\"" + sichererStatus + "\"";
   json += "}";
   server.send(200, "application/json", json);
+}
+
+void publishMQTTDiscovery() {
+  if (!mqttClient.connected()) return;
+  String deviceID = NAME; // einheitlich für alle Sensoren
+
+  struct Sensor {
+    String id;
+    String name;
+    String unit;
+    String devclass;
+    String topic;
+    bool binary; // true für binary_sensor
+  };
+
+  Sensor sensoren[] = {
+    {"tin", "Temperatur Innen", "°C", "temperature", mqttPublishPrefix + "temp_innen", false},
+    {"hin", "Luftfeuchte Innen", "%", "humidity", mqttPublishPrefix + "hygro_innen", false},
+    {"tdin", "Taupunkt Innen", "°C", "temperature", mqttPublishPrefix + "taupunkt_innen", false},
+
+    {"tout", "Temperatur Außen", "°C", "temperature", mqttPublishPrefix + "temp_aussen", false},
+    {"hout", "Luftfeuchte Außen", "%", "humidity", mqttPublishPrefix + "hygro_aussen", false},
+    {"tdout", "Taupunkt Außen", "°C", "temperature", mqttPublishPrefix + "taupunkt_aussen", false}, // ggf. anpassen
+
+    {"diff", "Taupunkt-Differenz", "°C", "temperature", mqttPublishPrefix + "diff", false},
+    
+    {"lueftung", "Lüftung aktiv", "", "", mqttPublishPrefix + "status", true}
+  };
+
+  for (Sensor s : sensoren) {
+    String type = s.binary ? "binary_sensor" : "sensor";
+    String configTopic = mqttDiscoveryPrefix + type + "/" + deviceID + "_" + s.id + "/config";
+
+    String payload = "{";
+    payload += "\"name\":\"" + s.name + "\",";
+    payload += "\"state_topic\":\"" + s.topic + "\",";
+    if (!s.unit.isEmpty()) payload += "\"unit_of_measurement\":\"" + s.unit + "\",";
+    if (!s.devclass.isEmpty()) payload += "\"device_class\":\"" + s.devclass + "\",";
+    if (s.binary) payload += "\"payload_on\":\"1\",\"payload_off\":\"0\",";
+    payload += "\"unique_id\":\"" + deviceID + "_" + s.id + "\",";
+    payload += "\"device\":{";
+    payload += "\"identifiers\":[\"" + deviceID + "\"],";
+    payload += "\"name\":\"TaupunktLueftung\",";
+    payload += "\"model\":\"ESP32\",";
+    payload += "\"manufacturer\":\"DIY\"}";
+    payload += "}";
+
+    Serial.println("Sende Discovery an Topic: " + configTopic);
+    Serial.println("Payload: " + payload);
+    mqttClient.publish(configTopic.c_str(), payload.c_str(), true); // retained
+    bool ok = mqttClient.publish(configTopic.c_str(), payload.c_str(), true);
+    Serial.println(ok ? "✔️ Publish erfolgreich" : "❌ Publish FEHLGESCHLAGEN");
+  }
+  mqttClient.publish("homeassistant/sensor/testsensor/config", 
+  "{\"name\":\"TestSensor\",\"state_topic\":\"testsensor/value\",\"unit_of_measurement\":\"°C\",\"device_class\":\"temperature\"}", 
+  true);
+  mqttClient.publish("testsensor/value", "22.1", true);
+  mqttClient.publish("homeassistant/sensor/testesp/config",
+  "{\"name\":\"ESPTest\",\"state_topic\":\"testesp/value\",\"unit_of_measurement\":\"°C\",\"device_class\":\"temperature\"}",
+  true);
+  mqttClient.publish("testesp/value", "21.5", true);
 }
 
 void redirectToSettings() {
@@ -550,6 +639,8 @@ String getMainScripts() {
         ajaxFormHandler("modusForm", "Sensor-Modus gespeichert.");
         ajaxFormHandler("mqttConfigForm", "MQTT-Verbindung gespeichert.");
         ajaxFormHandler("mqttTopicsForm", "MQTT Topics gespeichert.");
+        ajaxFormHandler("discoveryForm", "MQTT Discovery gesendet.");
+        ajaxFormHandler("discoveryPrefixForm", "Discovery Prefix gespeichert.");
       };
 
       // ===== AJAX Hilfsfunktion =====
@@ -808,30 +899,55 @@ String getSettingsHtml() {
 
   // MQTT Einstellungen
   html += "<fieldset><legend>MQTT</legend>";
+  // Verbindungsdaten
   html += "<form id='mqttConfigForm' method='POST' action='/mqttconfig'>";
-  html += "Server: <input name='server' value='" + String(mqttServer) + "'><br>";
-  html += "Port: <input name='port' value='" + String(mqttPort) + "'><br>";
-  html += "Benutzer: <input name='user' value='" + String(mqttUser) + "'><br>";
-  html += "Passwort: <input type='password' name='pass' value='" + String(mqttPassword) + "'><br>";
-  html += "<input type='submit' value='MQTT-Verbindung speichern'></form><br>";
-
+  html += "<p><strong>MQTT-Server</strong> Zugangsdaten:</p>";
+  html += "Server: <input name='server' value='" + String(mqttServer) + "' "
+          "title='Hostname oder IP-Adresse deines MQTT-Brokers, z. B. 192.168.1.10 oder mqtt.local'><br>";
+  html += "Port: <input name='port' value='" + String(mqttPort) + "' "
+          "title='Standardmäßig 1883. Passe den Port an, falls dein Broker einen anderen verwendet.'><br>";
+  html += "Benutzer: <input name='user' value='" + String(mqttUser) + "' "
+          "title='Benutzername für die Verbindung zum MQTT-Server (optional)'><br>";
+  html += "Passwort: <input type='password' name='pass' value='" + String(mqttPassword) + "' "
+          "title='Passwort für den oben angegebenen Benutzer (optional)'><br>";
+  html += "<input type='submit' value='MQTT-Verbindung speichern'></form>";
+  // Topics & Prefix
+  // Discovery-Prefix
+  html += "<form id='discoveryPrefixForm' method='POST' action='/mqttdiscoveryprefix'>";
+  html += "<p><strong>MQTT Discovery Prefix</strong>:</p>";
+  html += "<input name='mqtt_discovery_prefix' value='" + mqttDiscoveryPrefix + "' "
+          "title='Prefix für MQTT Auto-Discovery, z. B. homeassistant/'><br>";
+  html += "<input type='submit' value='Discovery-Prefix speichern'>";
+  html += "</form>";
   html += "<form id='mqttTopicsForm' method='POST' action='/mqtttopics'>";
-  html += "Innen Temperatur: <input name='temp_innen' value='" + mqttTempInnen + "'><br>";
-  html += "Innen Feuchte: <input name='hygro_innen' value='" + mqttHygroInnen + "'><br>";
-  html += "Außen Temperatur: <input name='temp_aussen' value='" + mqttTempAussen + "'><br>";
-  html += "Außen Feuchte: <input name='hygro_aussen' value='" + mqttHygroAussen + "'><br>";
-  html += "<input type='submit' value='MQTT Topics speichern'></form><br>";
-
+  html += "<p><strong>MQTT-Prefix</strong> für alle ausgehenden Nachrichten:</p>";
+  html += "Publish-Prefix: <input name='mqtt_pub_prefix' value='" + mqttPublishPrefix + "' "
+          "title='Dieses Präfix wird für alle automatisch gesendeten MQTT-Nachrichten verwendet, z. B. esp32/innen/. Achte auf einen abschließenden Slash!'><br>";
+  html += "<p><strong>Abonnierte MQTT-Topics</strong> für empfangene Sensordaten:</p>";
+  html += "Innen Temperatur: <input name='temp_innen' value='" + mqttTempInnen + "' "
+          "title='MQTT-Topic, von dem Temperaturwerte (in °C) für den Innenraum empfangen werden. Nur bei MQTT-Modus aktiv.'><br>";
+  html += "Innen Feuchte: <input name='hygro_innen' value='" + mqttHygroInnen + "' "
+          "title='MQTT-Topic, von dem Luftfeuchtigkeit (0–100 %) für den Innenraum empfangen wird.'><br>";
+  html += "Außen Temperatur: <input name='temp_aussen' value='" + mqttTempAussen + "' "
+          "title='MQTT-Topic, von dem Temperaturwerte für den Außenbereich empfangen werden.'><br>";
+  html += "Außen Feuchte: <input name='hygro_aussen' value='" + mqttHygroAussen + "' "
+          "title='MQTT-Topic, von dem Luftfeuchtigkeit für den Außenbereich empfangen wird.'><br>";
+  html += "<input type='submit' value='MQTT Topics speichern'></form>";
+  // Umschalter MQTT ein/aus
   html += "<form method='POST' action='/setMQTT'>";
-  html += "<label for='mqtt_toggle'>MQTT:</label>";
-  html += "<input type='hidden' name='mqtt' value=''>";
+  html += "<label for='mqtt_toggle'>MQTT aktiv:</label>";
+  html += "<input type='hidden' name='mqtt' value=''>"; // WICHTIG!
   html += "<label class='switch'>";
   html += "<input type='checkbox' name='mqtt_toggle' id='mqtt_toggle' ";
   html += mqttAktiv ? "checked " : "";
   html += "onchange='toggleMQTT(this)'>";
   html += "<span class='slider round'></span>";
   html += "</label></form>";
-  html += "</form></fieldset>";
+  // Manuelle Discovery-Auslösung
+  html += "<form id='discoveryForm' method='POST' action='/mqttdiscovery'>";
+  html += "<input type='submit' value='MQTT Discovery erneut senden'>";
+  html += "</form>";
+  html += "</fieldset>";
 
   // Firmware-Button
   html += "<fieldset><legend>Firmware</legend>";
@@ -845,12 +961,17 @@ String getSettingsHtml() {
 }
 //Firmware
 String getFirmwareModalHtml() {
-  return R"rawliteral(
+  String html = R"rawliteral(
     <div id="firmwareModal" class="modal hidden">
       <div class="modal-content">
         <span class="close" onclick="closeFirmwareModal()">&times;</span>
         <h3>Firmware-Update durchführen</h3>
-        <p>Installierte Firmware-Version: " + String(FIRMWARE_VERSION) + "</p>
+  )rawliteral";
+
+  // Hier dynamisch einfügen:
+  html += "<p>Installierte Firmware-Version: " + String(FIRMWARE_VERSION) + "</p>";
+
+  html += R"rawliteral(
         <form method="POST" action="/update" enctype="multipart/form-data" onsubmit="return confirmFirmwareUpdate();">
           <input type="file" name="firmware" required><br><br>
           <input type="submit" value="Upload & Update">
@@ -858,6 +979,8 @@ String getFirmwareModalHtml() {
       </div>
     </div>
   )rawliteral";
+
+  return html;
 }
 
 //Handler
@@ -892,11 +1015,14 @@ void handleSetModus() {
 //MQTT
 void handleSetMQTT() {
   if (server.hasArg("mqtt")) {
+    Serial.println("MQTT-Toggle empfangen: " + server.arg("mqtt"));
     mqttAktiv = (server.arg("mqtt") == "MQTT aktivieren");
     prefs.begin("config", false);
     prefs.putBool("mqtt", mqttAktiv);
     prefs.end();
-    if (mqttAktiv) reconnectMQTT();
+    if (mqttAktiv) {
+      reconnectMQTT();
+    }
   }
   redirectToSettings();
 }
@@ -918,11 +1044,29 @@ void handleMQTTTopics() {
   mqttTempAussen  = server.arg("temp_aussen");
   mqttHygroAussen = server.arg("hygro_aussen");
 
+  if (server.hasArg("mqtt_pub_prefix")) {
+    mqttPublishPrefix = server.arg("mqtt_pub_prefix");
+    if (!mqttPublishPrefix.endsWith("/")) mqttPublishPrefix += "/";
+  }
+
   saveMQTTTopics();
-  if (mqttClient.connected()) resubscribeMQTTTopics();
+  if (mqttClient.connected()) {
+    resubscribeMQTTTopics();
+    publishMQTTDiscovery();
+  }
 
   redirectToSettings();
 }
+void handleMQTTDiscovery() {
+  if (mqttClient.connected()) {
+    publishMQTTDiscovery();
+    Serial.println("🟢 MQTT ist verbunden. Sende Discovery...");
+  } else {
+    Serial.println("🔴 MQTT NICHT verbunden – keine Discovery gesendet.");
+  }
+  redirectToSettings();
+}
+
 //Firmware
 void handleFirmwareUpload() {
   HTTPUpload& upload = server.upload();
@@ -991,6 +1135,8 @@ void setupPreferences() {
 void setupMQTT() {
   loadMQTTSettings();
   loadMQTTTopics();
+  mqttClient.setServer(mqttServer, mqttPort);
+  mqttClient.setKeepAlive(60);
   mqttClient.setCallback(mqttCallback);
   if (mqttAktiv) reconnectMQTT();
 }
@@ -1007,6 +1153,32 @@ void setupWebServer() {
   server.on("/chartdata", handleChartData);
   server.on("/livedata", handleLiveData);
   server.on("/style.css", handleCSS);
+  server.on("/mqttdiscovery", HTTP_POST, handleMQTTDiscovery);
+  server.on("/mqttdiscoveryprefix", HTTP_POST, []() {
+    if (server.hasArg("mqtt_discovery_prefix")) {
+      mqttDiscoveryPrefix = server.arg("mqtt_discovery_prefix");
+      if (!mqttDiscoveryPrefix.endsWith("/")) mqttDiscoveryPrefix += "/";
+      
+      prefs.begin("config", false);
+      prefs.putString("mqtt_discovery_prefix", mqttDiscoveryPrefix);
+      prefs.end();
+
+      publishMQTTDiscovery();
+
+      server.send(200, "text/plain", "OK"); // Nur als Feedback für AJAX
+    } else {
+      server.send(400, "text/plain", "Missing prefix");
+    }
+  });
+  server.on("/rediscovery", []() {
+    if (mqttClient.connected()) {
+      publishMQTTDiscovery();
+      mqttClient.publish("homeassistant/status", "online", true);
+      server.send(200, "text/plain", "Discovery gesendet.");
+    } else {
+      server.send(500, "text/plain", "MQTT nicht verbunden.");
+    }
+  });
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
     server.send(200, "text/html", R"rawliteral(
