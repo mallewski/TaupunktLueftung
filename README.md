@@ -119,7 +119,7 @@ Für eine effektive Kellerlüftung sind leistungsstarke Ventilatoren erforderlic
 - MQTT Topics sind vollständig konfigurierbar im Webinterface
 - Verfügbarkeitsstatus über 'availability_topic'
 
-**Hinweis:** Falls MQTT Discovery nicht funktioniert, siehe [Debug-Hinweise](Debug%20Hinweise.md)
+**Hinweis:** Falls MQTT Discovery nicht funktioniert, siehe [Debug-Hinweise](debug_hinweise.md)
 
 ## Unterstütze das Projekt
 
