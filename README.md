@@ -63,7 +63,7 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
             +----------------------------+
             |         ESP32 Dev          |
             |                            |
-            |  GPIO17 --> DHT22 (außen)  |
+            |  GPIO17 --> DHT22 data  |
             |  GPIO16 --> Relais IN      |
             |  GPIO2  --> LED grün       |
             |  GPIO18 --> LED rot        |
