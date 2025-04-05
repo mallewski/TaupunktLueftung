@@ -86,7 +86,7 @@ LED's: Anode (langer Pin) → Vorwiderstand → GPIO / Kathode (kurzer Pin) → 
 - **Webinterface:** Alle Einstellungen wie MQTT, Sensorquellen und Schwellenwerte  
   sind direkt über das Browser-Interface konfigurierbar.
 - **Außensensor (DHT22) wettergeschützt montieren**, z. B. unter einem Vordach oder in einem geeigneten Gehäuse.
-
+- **WLAN-Verbindung** Die `secrets_template.h` muss in `secrets.h` umbenannt und die Zugangsdaten für das WLAN eingetragen werden.
 
 ### **Lüfterempfehlung**
 
@@ -118,6 +118,8 @@ Für eine effektive Kellerlüftung sind leistungsstarke Ventilatoren erforderlic
 - Unterstützt Auto-Discovery
 - MQTT Topics sind vollständig konfigurierbar im Webinterface
 - Verfügbarkeitsstatus über 'availability_topic'
+
+**Hinweis:** Falls MQTT Discovery nicht funktioniert, siehe [Debug-Hinweise](Debug%20Hinweise.md)
 
 ## Unterstütze das Projekt
 
