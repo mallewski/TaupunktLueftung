@@ -24,6 +24,9 @@
 #define MAX_POINTS 720
 #define SENSORZYKLUS_MS 5000
 
+//Debugging
+bool debugMQTT = false; // Debug für MQTT Discovery aktiv
+
 Preferences prefs;
 WebServer server(80);
 WiFiClient espClient;
@@ -103,6 +106,7 @@ void setLEDs(bool gruen, bool rot, bool gelb) {
   digitalWrite(STATUS_YELLOW_PIN, gelb);
 }
 
+//MQTT Empfang
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String val;
   for (unsigned int i = 0; i < length; i++) val += (char)payload[i];
@@ -113,6 +117,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) == mqttHygroAussen) mqtt_rh_out = fval;
 }
 
+//MQTT Senden
 void publishAllStates() {
   if (!mqttAktiv || !mqttClient.connected()) return;
 
@@ -136,16 +141,65 @@ void publishAllStates() {
   mqttClient.publish((mqttPublishPrefix + "availability").c_str(), "online", true);
 }
 
-void aktualisiereSensoren() {
-  t_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_t_in : shtInnen.readTemperature();
-  rh_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_rh_in : shtInnen.readHumidity();
-  t_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_t_out : dht.readTemperature();
-  rh_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_rh_out : dht.readHumidity();
+void publishMQTTDiscovery() {
+  if (!mqttClient.connected()) return;
+  String deviceID = NAME; // einheitlich für alle Sensoren
 
-  if (!isnan(t_in) && !isnan(rh_in)) td_in = berechneTaupunkt(t_in, rh_in);
-  if (!isnan(t_out) && !isnan(rh_out)) td_out = berechneTaupunkt(t_out, rh_out);
+  struct Sensor {
+    String id;
+    String name;
+    String unit;
+    String devclass;
+    String topic;
+    bool binary; // true für binary_sensor
+  };
 
-  publishAllStates();
+  Sensor sensoren[] = {
+    {"tin", "Temperatur Innen", "°C", "temperature", mqttPublishPrefix + "temp_innen", false},
+    {"hin", "Luftfeuchte Innen", "%", "humidity", mqttPublishPrefix + "hygro_innen", false},
+    {"tdin", "Taupunkt Innen", "°C", "temperature", mqttPublishPrefix + "taupunkt_innen", false},
+
+    {"tout", "Temperatur Außen", "°C", "temperature", mqttPublishPrefix + "temp_aussen", false},
+    {"hout", "Luftfeuchte Außen", "%", "humidity", mqttPublishPrefix + "hygro_aussen", false},
+    {"tdout", "Taupunkt Außen", "°C", "temperature", mqttPublishPrefix + "taupunkt_aussen", false}, // ggf. anpassen
+
+    {"diff", "Taupunkt-Differenz", "°C", "temperature", mqttPublishPrefix + "diff", false},
+    
+    {"lueftung", "Lüftung aktiv", "", "", mqttPublishPrefix + "status", true}
+  };
+
+  for (Sensor s : sensoren) {
+    String type = s.binary ? "binary_sensor" : "sensor";
+    String configTopic = mqttDiscoveryPrefix + type + "/" + deviceID + "_" + s.id + "/config";
+
+    String payload = "{";
+    payload += "\"name\":\"" + s.name + "\",";
+    payload += "\"state_topic\":\"" + s.topic + "\",";
+    payload += "\"availability_topic\":\"" + mqttPublishPrefix + "availability\",";
+    payload += "\"payload_available\":\"online\",\"payload_not_available\":\"offline\",";
+    if (!s.unit.isEmpty()) payload += "\"unit_of_measurement\":\"" + s.unit + "\",";
+    if (!s.devclass.isEmpty()) payload += "\"device_class\":\"" + s.devclass + "\",";
+    if (s.binary) payload += "\"payload_on\":\"1\",\"payload_off\":\"0\",";
+    payload += "\"unique_id\":\"" + deviceID + "_" + s.id + "\",";
+    payload += "\"device\":{";
+    payload += "\"identifiers\":[\"" + deviceID + "\"],";
+    payload += "\"name\":\"TaupunktLueftung\",";
+    payload += "\"model\":\"ESP32\",";
+    payload += "\"manufacturer\":\"DIY\"}";
+    payload += "}";
+    bool ok = mqttClient.publish(configTopic.c_str(), payload.c_str(), true);
+    if (debugMQTT) {
+      Serial.println("Sende Discovery an Topic: " + configTopic);
+      Serial.println("Payload: " + payload);
+      Serial.println(ok ? "✔️ Publish erfolgreich" : "❌ Publish FEHLGESCHLAGEN");
+    }
+  }
+  if (debugMQTT) {
+    mqttClient.publish("homeassistant/sensor/testsensor/config", 
+    "{\"name\":\"TestSensor\",\"state_topic\":\"testsensor/value\",\"unit_of_measurement\":\"°C\",\"device_class\":\"temperature\"}", 
+    true);
+    mqttClient.publish("testsensor/value", "22.1", true);
+  }
 }
 
 void loadMQTTSettings() {
@@ -218,6 +272,18 @@ void reconnectMQTT() {
       break;
     }
   }
+  publishAllStates();
+}
+
+void aktualisiereSensoren() {
+  t_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_t_in : shtInnen.readTemperature();
+  rh_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_rh_in : shtInnen.readHumidity();
+  t_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_t_out : dht.readTemperature();
+  rh_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_rh_out : dht.readHumidity();
+
+  if (!isnan(t_in) && !isnan(rh_in)) td_in = berechneTaupunkt(t_in, rh_in);
+  if (!isnan(t_out) && !isnan(rh_out)) td_out = berechneTaupunkt(t_out, rh_out);
+
   publishAllStates();
 }
 
@@ -300,67 +366,6 @@ void handleLiveData() {
   json += "\"status\":\"" + sichererStatus + "\"";
   json += "}";
   server.send(200, "application/json", json);
-}
-
-void publishMQTTDiscovery() {
-  if (!mqttClient.connected()) return;
-  String deviceID = NAME; // einheitlich für alle Sensoren
-
-  struct Sensor {
-    String id;
-    String name;
-    String unit;
-    String devclass;
-    String topic;
-    bool binary; // true für binary_sensor
-  };
-
-  Sensor sensoren[] = {
-    {"tin", "Temperatur Innen", "°C", "temperature", mqttPublishPrefix + "temp_innen", false},
-    {"hin", "Luftfeuchte Innen", "%", "humidity", mqttPublishPrefix + "hygro_innen", false},
-    {"tdin", "Taupunkt Innen", "°C", "temperature", mqttPublishPrefix + "taupunkt_innen", false},
-
-    {"tout", "Temperatur Außen", "°C", "temperature", mqttPublishPrefix + "temp_aussen", false},
-    {"hout", "Luftfeuchte Außen", "%", "humidity", mqttPublishPrefix + "hygro_aussen", false},
-    {"tdout", "Taupunkt Außen", "°C", "temperature", mqttPublishPrefix + "taupunkt_aussen", false}, // ggf. anpassen
-
-    {"diff", "Taupunkt-Differenz", "°C", "temperature", mqttPublishPrefix + "diff", false},
-    
-    {"lueftung", "Lüftung aktiv", "", "", mqttPublishPrefix + "status", true}
-  };
-
-  for (Sensor s : sensoren) {
-    String type = s.binary ? "binary_sensor" : "sensor";
-    String configTopic = mqttDiscoveryPrefix + type + "/" + deviceID + "_" + s.id + "/config";
-
-    String payload = "{";
-    payload += "\"name\":\"" + s.name + "\",";
-    payload += "\"state_topic\":\"" + s.topic + "\",";
-    if (!s.unit.isEmpty()) payload += "\"unit_of_measurement\":\"" + s.unit + "\",";
-    if (!s.devclass.isEmpty()) payload += "\"device_class\":\"" + s.devclass + "\",";
-    if (s.binary) payload += "\"payload_on\":\"1\",\"payload_off\":\"0\",";
-    payload += "\"unique_id\":\"" + deviceID + "_" + s.id + "\",";
-    payload += "\"device\":{";
-    payload += "\"identifiers\":[\"" + deviceID + "\"],";
-    payload += "\"name\":\"TaupunktLueftung\",";
-    payload += "\"model\":\"ESP32\",";
-    payload += "\"manufacturer\":\"DIY\"}";
-    payload += "}";
-
-    Serial.println("Sende Discovery an Topic: " + configTopic);
-    Serial.println("Payload: " + payload);
-    mqttClient.publish(configTopic.c_str(), payload.c_str(), true); // retained
-    bool ok = mqttClient.publish(configTopic.c_str(), payload.c_str(), true);
-    Serial.println(ok ? "✔️ Publish erfolgreich" : "❌ Publish FEHLGESCHLAGEN");
-  }
-  mqttClient.publish("homeassistant/sensor/testsensor/config", 
-  "{\"name\":\"TestSensor\",\"state_topic\":\"testsensor/value\",\"unit_of_measurement\":\"°C\",\"device_class\":\"temperature\"}", 
-  true);
-  mqttClient.publish("testsensor/value", "22.1", true);
-  mqttClient.publish("homeassistant/sensor/testesp/config",
-  "{\"name\":\"ESPTest\",\"state_topic\":\"testesp/value\",\"unit_of_measurement\":\"°C\",\"device_class\":\"temperature\"}",
-  true);
-  mqttClient.publish("testesp/value", "21.5", true);
 }
 
 void redirectToSettings() {
@@ -1015,7 +1020,9 @@ void handleSetModus() {
 //MQTT
 void handleSetMQTT() {
   if (server.hasArg("mqtt")) {
-    Serial.println("MQTT-Toggle empfangen: " + server.arg("mqtt"));
+    if (debugMQTT) {
+      Serial.println("MQTT-Toggle empfangen: " + server.arg("mqtt"));
+    }
     mqttAktiv = (server.arg("mqtt") == "MQTT aktivieren");
     prefs.begin("config", false);
     prefs.putBool("mqtt", mqttAktiv);
