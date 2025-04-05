@@ -21,9 +21,9 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 
 - Unterstützt Firmware-Updates über das Webinterface (OTA) (File: 'TaupunktLueftung.ino.bin')
 
-<img src="docs/aufbau.png" alt="Screenshot_dashboard.jpg" width="400">
-<img src="docs/aufbau.png" alt="Screenshot_setting1.jpg" width="400">
-<img src="docs/aufbau.png" alt="Screenshot_setting2.jpg" width="400">
+<img src="docs/Screenshot_dashboard.png" alt="Screenshot_dashboard" width="400">
+<img src="docs/Screenshot_setting1.png" alt="Screenshot_setting1" width="400">
+<img src="docs/Screenshot_setting2.png" alt="Screenshot_setting2" width="400">
 
 ## Benötigte Komponenten und Aufbau
 
