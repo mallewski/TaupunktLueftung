@@ -19,7 +19,7 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 
 - Modular: wählbare Sensorquelle (Hardware oder MQTT-Daten)
 
-- Unterstützt Firmware-Updates über das Webinterface (OTA)
+- Unterstützt Firmware-Updates über das Webinterface (OTA) (File: 'TaupunktLueftung.ino.bin')
 
 
 ## Benötigte Komponenten und Aufbau
