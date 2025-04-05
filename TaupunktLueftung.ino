@@ -25,20 +25,20 @@
 #define SENSORZYKLUS_MS 5000
 
 //Debugging
-bool debugMQTT = false; // Debug für MQTT Discovery aktiv
+bool debugMQTT = false; // Debug für MQTT Discovery
 
 Preferences prefs;
 WebServer server(80);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
-
 Adafruit_SHT31 shtInnen = Adafruit_SHT31();
 DHT dht(DHTPIN, DHTTYPE);
 
-
 char ssid[32] = WIFI_SSID;
 char password[64] = WIFI_PASSWORD;
+
 const char* configPassword = CONFIG_PASSWORD;
+
 char mqttServer[64] = MQTT_SERVER;
 int mqttPort = MQTT_PORT;
 char mqttUser[32] = MQTT_USER;
@@ -51,40 +51,32 @@ String mqttHygroAussen = "sensors/hygro_aussen";
 String mqttPublishPrefix = "taupunktlueftung/";
 String mqttDiscoveryPrefix = "homeassistant/";
 
-
+bool mqttAktiv = true;
 String modus_innen = "hardware";
 String modus_aussen = "hardware";
-bool mqttAktiv = true;
 bool updateModeActive = false;
 bool schutzVorAuskuehlungAktiv = false;
 float minTempInnen = 12.0; // °C – Beispielwert
+float taupunktDifferenzSchwellwert = 4.0;
 
 float t_in = NAN, rh_in = NAN, td_in = NAN;
 float t_out = NAN, rh_out = NAN, td_out = NAN;
+
 float mqtt_t_in = NAN, mqtt_rh_in = NAN;
 float mqtt_t_out = NAN, mqtt_rh_out = NAN;
+
 float td_in_history[MAX_POINTS];
 float td_out_history[MAX_POINTS];
 float td_diff_history[MAX_POINTS];
 float rh_in_history[MAX_POINTS];
 float rh_out_history[MAX_POINTS];
+bool status_history[MAX_POINTS]; 
 int history_index = 0;
 
 String statusText = "Unbekannt";
 bool lueftungAktiv = false;
 String logEintrag = "";
 String letzteUhrzeit = "--:--:--";
-float taupunktDifferenzSchwellwert = 4.0;
-bool status_history[MAX_POINTS]; 
-
-float berechneTaupunkt(float T, float RH) {
-  float a = (T >= 0) ? 7.5 : 7.6;
-  float b = (T >= 0) ? 237.3 : 240.7;
-  float sdd = 6.1078 * pow(10, (a * T) / (b + T));
-  float dd = sdd * RH / 100.0;
-  float v = log10(dd / 6.1078);
-  return (b * v) / (a - v);
-}
 
 String getUhrzeit() {
   struct tm timeinfo;
@@ -104,6 +96,16 @@ void setLEDs(bool gruen, bool rot, bool gelb) {
   digitalWrite(STATUS_GREEN_PIN, gruen);
   digitalWrite(STATUS_RED_PIN, rot);
   digitalWrite(STATUS_YELLOW_PIN, gelb);
+}
+
+//Taupunktberechnung
+float berechneTaupunkt(float T, float RH) {
+  float a = (T >= 0) ? 7.5 : 7.6;
+  float b = (T >= 0) ? 237.3 : 240.7;
+  float sdd = 6.1078 * pow(10, (a * T) / (b + T));
+  float dd = sdd * RH / 100.0;
+  float v = log10(dd / 6.1078);
+  return (b * v) / (a - v);
 }
 
 void aktualisiereSensoren() {
