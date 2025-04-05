@@ -106,6 +106,55 @@ void setLEDs(bool gruen, bool rot, bool gelb) {
   digitalWrite(STATUS_YELLOW_PIN, gelb);
 }
 
+void aktualisiereSensoren() {
+  t_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_t_in : shtInnen.readTemperature();
+  rh_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_rh_in : shtInnen.readHumidity();
+  t_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_t_out : dht.readTemperature();
+  rh_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_rh_out : dht.readHumidity();
+
+  if (!isnan(t_in) && !isnan(rh_in)) td_in = berechneTaupunkt(t_in, rh_in);
+  if (!isnan(t_out) && !isnan(rh_out)) td_out = berechneTaupunkt(t_out, rh_out);
+
+  publishAllStates();
+}
+
+void steuerlogik() {
+  if (isnan(td_in) || isnan(td_out)) return;
+  float diff = td_in - td_out;
+
+  if (diff >= taupunktDifferenzSchwellwert) {
+    if (!lueftungAktiv) {
+      digitalWrite(RELAY_LED_PIN, HIGH);
+      lueftungAktiv = true;
+      logEvent("Lüftung aktiviert");
+    }
+    setLEDs(true, false, false);
+    statusText = "Trocknend - Lüftung aktiv";
+  } else {
+    if (lueftungAktiv) {
+      digitalWrite(RELAY_LED_PIN, LOW);
+      lueftungAktiv = false;
+      logEvent("Lüftung deaktiviert");
+    }
+    if (diff <= -taupunktDifferenzSchwellwert) {
+      setLEDs(false, true, false);
+      statusText = "Befeuchtend - Lüftung aus";
+    } else {
+      setLEDs(false, false, true);
+      statusText = "Neutral - Lüftung aus";
+    }
+    publishAllStates();
+  }
+
+  td_in_history[history_index] = td_in;
+  td_out_history[history_index] = td_out;
+  td_diff_history[history_index] = diff;
+  rh_in_history[history_index] = rh_in;
+  rh_out_history[history_index] = rh_out;
+  status_history[history_index] = lueftungAktiv;
+  history_index = (history_index + 1) % MAX_POINTS;
+}
+
 //MQTT Empfang
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String val;
@@ -273,55 +322,6 @@ void reconnectMQTT() {
     }
   }
   publishAllStates();
-}
-
-void aktualisiereSensoren() {
-  t_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_t_in : shtInnen.readTemperature();
-  rh_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_rh_in : shtInnen.readHumidity();
-  t_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_t_out : dht.readTemperature();
-  rh_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_rh_out : dht.readHumidity();
-
-  if (!isnan(t_in) && !isnan(rh_in)) td_in = berechneTaupunkt(t_in, rh_in);
-  if (!isnan(t_out) && !isnan(rh_out)) td_out = berechneTaupunkt(t_out, rh_out);
-
-  publishAllStates();
-}
-
-void steuerlogik() {
-  if (isnan(td_in) || isnan(td_out)) return;
-  float diff = td_in - td_out;
-
-  if (diff >= taupunktDifferenzSchwellwert) {
-    if (!lueftungAktiv) {
-      digitalWrite(RELAY_LED_PIN, HIGH);
-      lueftungAktiv = true;
-      logEvent("Lüftung aktiviert");
-    }
-    setLEDs(true, false, false);
-    statusText = "Trocknend - Lüftung aktiv";
-  } else {
-    if (lueftungAktiv) {
-      digitalWrite(RELAY_LED_PIN, LOW);
-      lueftungAktiv = false;
-      logEvent("Lüftung deaktiviert");
-    }
-    if (diff <= -taupunktDifferenzSchwellwert) {
-      setLEDs(false, true, false);
-      statusText = "Befeuchtend - Lüftung aus";
-    } else {
-      setLEDs(false, false, true);
-      statusText = "Neutral - Lüftung aus";
-    }
-    publishAllStates();
-  }
-
-  td_in_history[history_index] = td_in;
-  td_out_history[history_index] = td_out;
-  td_diff_history[history_index] = diff;
-  rh_in_history[history_index] = rh_in;
-  rh_out_history[history_index] = rh_out;
-  status_history[history_index] = lueftungAktiv;
-  history_index = (history_index + 1) % MAX_POINTS;
 }
 
 void handleChartData() {
@@ -641,6 +641,7 @@ String getMainScripts() {
         setInterval(updateLiveData, 5000);
         setInterval(updateChart, 5000);
         ajaxFormHandler("tempschutzForm", "Temperaturschutz gespeichert.");
+        ajaxFormHandler("schwelleForm", "Schwellenwert gespeichert.");
         ajaxFormHandler("modusForm", "Sensor-Modus gespeichert.");
         ajaxFormHandler("mqttConfigForm", "MQTT-Verbindung gespeichert.");
         ajaxFormHandler("mqttTopicsForm", "MQTT Topics gespeichert.");
@@ -885,6 +886,15 @@ String getSettingsHtml() {
   html += "Mindest-Innentemperatur (°C): <input type='number' step='0.1' name='min_temp' value='" + String(minTempInnen, 1) + "'><br>";
   html += "<input type='submit' value='Speichern'></form></fieldset>";
 
+  // Taupunktdifferenz-Schwellenwert
+  html += "<fieldset><legend>Schwellenwert</legend>";
+  html += "<form id='schwelleForm' method='POST' action='/setSchwelle'>";
+  html += "Taupunkt-Differenz (°C), ab der gelüftet wird:<br>";
+  html += "<input type='number' step='0.1' name='schwelle' value='" + String(taupunktDifferenzSchwellwert, 1) + "' "
+          "title='Empfohlener Wert: 4,0 °C\n\nDie Außenluft muss mindestens so viel \"trockener\" sein (Taupunkt-Differenz), damit gelüftet wird.\n\nTipp: Höher = vorsichtiger, niedriger = aggressiver lüften.'><br>";
+  html += "<input type='submit' value='Schwellenwert speichern'>";
+  html += "</form></fieldset>";
+
   // Sensorquelle
   bool disabled = !mqttAktiv;
   html += "<fieldset><legend>Sensorquelle</legend>";
@@ -1005,6 +1015,16 @@ void handleTempSchutz() {
   prefs.putFloat("min_temp", minTempInnen);
   prefs.end();
 
+  redirectToSettings();
+}
+//Schwellenwert
+void handleSetSchwelle() {
+  if (server.hasArg("schwelle")) {
+    taupunktDifferenzSchwellwert = server.arg("schwelle").toFloat();
+    prefs.begin("config", false);
+    prefs.putFloat("schwelle", taupunktDifferenzSchwellwert);
+    prefs.end();
+  }
   redirectToSettings();
 }
 //Modus (eigene Sensoren oder MQTT)
@@ -1153,6 +1173,7 @@ void setupWebServer() {
 
   server.on("/", handleRoot);
   server.on("/tempschutz", HTTP_POST, handleTempSchutz);
+  server.on("/setSchwelle", HTTP_POST, handleSetSchwelle);
   server.on("/mqttconfig", HTTP_POST, handleMQTTConfig);
   server.on("/mqtttopics", HTTP_POST, handleMQTTTopics);
   server.on("/setMQTT", handleSetMQTT);
