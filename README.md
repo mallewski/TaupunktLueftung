@@ -9,13 +9,15 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 
 ## Features:
 
-- Steuerung über Webinterface mit Live-Datenanzeige und Echtzeitdiagrammen
+- Taupunktgesteuerte Lüftung zur gezielten Entfeuchtung - ein Algorithmus zur Taupunktanalyse steuert die Lüftung je nach Differenz.
 
-- Optionaler Zugriff und Integration via MQTT
+- Webinterface mit Live-Datenanzeige, Echtzeitdiagrammen und Konfigurationbereich
 
-- Modularer Aufbau: interne Sensoren oder externe MQTT-Daten
+- Einstellbarer Temperaturschutz gegen Auskühlung
 
-- Algorithmus zur Taupunktanalyse steuert die Lüftung je nach Differenz
+- MQTT-Schnittstelle (Publish & Subscribe) + Home Assistant Auto-Discovery
+
+- Modular: wählbare Sensorquelle (Hardware oder MQTT-Daten)
 
 - Unterstützt Firmware-Updates über das Webinterface (OTA)
 
@@ -77,13 +79,13 @@ LED's: Anode (langer Pin) → Vorwiderstand → GPIO / Kathode (kurzer Pin) → 
 - **Relais-Modul:** Kann zum Schalten einer 230 V-Lüftung verwendet werden.  
   **Achtung:** Netzspannung nur durch Fachpersonal anschließen lassen.
 - **MQTT:** Zum Empfangen externer Sensordaten wird ein MQTT-Broker benötigt  
-  (z. B. Mosquitto oder Home Assistant).
+  (z. B. Mosquitto oder Home Assistant). Mit Auto-Discovery (Home Assistant kompatibel).
 - **Webinterface:** Alle Einstellungen wie MQTT, Sensorquellen und Schwellenwerte  
   sind direkt über das Browser-Interface konfigurierbar.
-- **DHT22 Sensor wettergeschützt montieren**, z. B. unter einem Vordach oder in einem geeigneten Gehäuse.
+- **Außensensor (DHT22) wettergeschützt montieren**, z. B. unter einem Vordach oder in einem geeigneten Gehäuse.
 
 
-### **Ventilatoren**
+### **Lüfterempfehlung**
 
 Für eine effektive Kellerlüftung sind leistungsstarke Ventilatoren erforderlich. Normale PC-Lüfter reichen in der Regel nicht aus.
 
@@ -92,6 +94,7 @@ Für eine effektive Kellerlüftung sind leistungsstarke Ventilatoren erforderlic
 - Achte auf ausreichenden **Volumenstrom** (mind. 100–150 m³/h für kleine Kellerräume)
 - Ideal: **Abluftventilator** mit Rückschlagklappe
 - Optional: **Zuluftventilator** oder passive Zuluftöffnung (mit Insektenschutzgitter)
+- Alternativ zum Relaisausgang kann die Lüftung auch über eine per MQTT schaltbare Steckdose gesteuert werden – z. B. eine WLAN-Steckdose, die über ein Smart-Home-System (wie Home Assistant) eingebunden ist.
 
 | Komponente         | Preis (ca.) | Hinweis                                         |
 |--------------------|-------------|-------------------------------------------------|
@@ -107,6 +110,11 @@ Für eine effektive Kellerlüftung sind leistungsstarke Ventilatoren erforderlic
 - Mehrere Ventilatoren (z. B. ein Zuluft- und ein Abluftventilator) können **parallel am gleichen Relaisausgang** betrieben werden, sofern die Gesamtlast das Relais nicht übersteigt (max. ca. 2 A bei 230 V bei handelsüblichen Relaismodulen)
 - Bei höheren Lasten ggf. **ein externes Leistungsrelais oder Schütz** verwenden
 
+### **Home Assistant Integration (MQTT)**
+
+- Unterstützt Auto-Discovery
+- MQTT Topics sind vollständig konfigurierbar im Webinterface
+- Verfügbarkeitsstatus über 'availability_topic'
 
 ## Unterstütze das Projekt
 
