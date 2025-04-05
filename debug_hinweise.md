@@ -3,14 +3,14 @@
 Standardmäßig ist die maximale Paketgröße in der verwendeten MQTT-Bibliothek PubSubClient auf 128 Bytes beschränkt. Das ist zu wenig für umfangreiche MQTT Discovery Payloads – sie werden dann nicht gesendet. Es erscheint auch kein Fehler.
 
 Lösung:
-In der Datei 'PubSubClient.h' den Wert von 'MQTT_MAX_PACKET_SIZE' erhöhen, z. B. auf 1024:
+In der Datei `PubSubClient.h` den Wert von `MQTT_MAX_PACKET_SIZE` erhöhen, z. B. auf 1024:
 
-'''#define MQTT_MAX_PACKET_SIZE 1024'''
+`#define MQTT_MAX_PACKET_SIZE 1024`
 
 Dateipfad:
 Je nach IDE und System findest du die Datei hier:
-- Arduino IDE: '<Benutzerverzeichnis>/Arduino/libraries/PubSubClient/src/PubSubClient.h'
-- PlatformIO: '.pio/libdeps/.../PubSubClient/src/PubSubClient.h'
+- Arduino IDE: `<Benutzerverzeichnis>/Arduino/libraries/PubSubClient/src/PubSubClient.h`
+- PlatformIO: `.pio/libdeps/.../PubSubClient/src/PubSubClient.h`
 
 ## Keine WLAN-Verbindung möglich
 
