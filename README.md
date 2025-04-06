@@ -6,6 +6,7 @@ Das System misst Temperatur und Luftfeuchtigkeit innen und außen (über Sensore
 
 Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup mit zwei Lüftern: einer zieht trockene Luft hinein, der andere führt feuchte Luft ab. Dadurch entsteht ein effektiver Luftstrom zum gezielten Entfeuchten.
 
+[Schnell-Start-Anleitung](quick_start.md)
 
 ## Features:
 
@@ -120,6 +121,7 @@ Für eine effektive Kellerlüftung sind leistungsstarke Ventilatoren erforderlic
 - Verfügbarkeitsstatus über 'availability_topic'
 
 **Hinweis:** Falls MQTT Discovery nicht funktioniert, siehe [Debug-Hinweise](debug_hinweise.md)
+
 
 ## Unterstütze das Projekt
 
