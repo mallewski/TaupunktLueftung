@@ -1,6 +1,6 @@
 ## Schnellstart: TaupunktLueftung auf ESP32
 
-1. Benötigte Hardware
+**1. Benötigte Hardware**
 
 ESP32 Dev Kit (z. B. dieses Board)
 
@@ -10,7 +10,7 @@ Relais, Sensoren, LEDs, Lüfter (siehe Stückliste in README)
 
 ---
 
-2. Arduino IDE vorbereiten
+**2. Arduino IDE vorbereiten**
 
 Installiere die Arduino IDE
 
@@ -27,7 +27,7 @@ Board auswählen: z. B. "ESP32 Dev Module"
 
 ---
 
-3. Projekt vorbereiten
+**3. Projekt vorbereiten**
 
 Lade den Projektordner herunter (GitHub oder ZIP)
 
@@ -43,7 +43,7 @@ Trage dort deine WLAN-Zugangsdaten und ggf. MQTT-Parameter ein
 
 ---
 
-4. ESP32 verbinden und flashen
+**4. ESP32 verbinden und flashen**
 
 Schließe das Board per USB an
 
@@ -57,7 +57,7 @@ Nach dem Flashen → Seriellen Monitor öffnen (115200 Baud) → Status prüfen
 
 ---
 
-5. Hardware aufbauen & verdrahten
+**5. Hardware aufbauen & verdrahten**
 
 Sensoren anschließen:
 
@@ -76,7 +76,7 @@ Tipp: Kabellängen für Sensoren möglichst kurz halten (ca. max. 2 m, abgesch
 
 ---
 
-6. Gehäusewahl
+**6. Gehäusewahl**
 
 Innen: z. B. Verteilerdose mit Platz für ESP32, Relais, LEDs, ggf. Innensensor
 
@@ -87,7 +87,7 @@ Außen: wettergeschütztes Gehäuse mit Belüftung für DHT22
 
 ---
 
-7. Lüfter anschließen
+**7. Lüfter anschließen**
 
 230 V-Ventilatoren über das Relais schalten
 
@@ -97,7 +97,7 @@ Alternativ: MQTT-gesteuerte Steckdose zur Lüftersteuerung (s. README)
 
 ---
 
-8. Fertig!
+**8. Fertig!**
 
 Webinterface aufrufen: http://[IP-Adresse deines ESP32] (wird auch in seriellem Monitor ausgegeben)
 
