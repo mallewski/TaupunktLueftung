@@ -6,7 +6,7 @@ Das System misst Temperatur und Luftfeuchtigkeit innen und außen (über Sensore
 
 Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup mit zwei Lüftern: einer zieht trockene Luft hinein, der andere führt feuchte Luft ab. Dadurch entsteht ein effektiver Luftstrom zum gezielten Entfeuchten.
 
-[Schnell-Start-Anleitung](quick_start.md)
+-> [Schnell-Start-Anleitung](quick_start.md)
 
 ## Features:
 
