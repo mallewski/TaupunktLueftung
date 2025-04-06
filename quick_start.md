@@ -2,7 +2,7 @@
 
 **1. Benötigte Hardware**
 
-ESP32 Dev Kit (z. B. dieses [Board] (https://amzn.eu/d/gyWvNsA))
+ESP32 Dev Kit (z. B. dieses [Board](https://amzn.eu/d/gyWvNsA))
 
 Relais, Sensoren, LEDs, Lüfter (siehe Stückliste in README)
 
