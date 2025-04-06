@@ -37,7 +37,7 @@ Datei secrets_template.h umbenennen zu secrets.h
 
 Trage dort deine WLAN-Zugangsdaten und ggf. MQTT-Parameter ein
 
-(-> für mqtt autodiscovery beachte )
+(-> für mqtt autodiscovery beachte [Debug-Hinweise](debug_hinweise.md))
 
 
 
