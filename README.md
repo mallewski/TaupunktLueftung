@@ -20,7 +20,8 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 
 - Modular: wählbare Sensorquelle (Hardware oder MQTT-Daten)
 
-- Unterstützt Firmware-Updates über das Webinterface (OTA) (File: 'TaupunktLueftung.ino.bin')
+- Unterstützt Firmware-Updates über das Webinterface (OTA) 
+Nach erstmaligen flashen per ArduinoIDE, können  neue releases einfach per Webinterface eingespielt werden. (File: 'TaupunktLueftung.ino.bin')
 
 <img src="docs/Screenshot_dashboard.png" alt="Screenshot_dashboard" width="400">
 <img src="docs/Screenshot_setting1.png" alt="Screenshot_setting1" width="400">
