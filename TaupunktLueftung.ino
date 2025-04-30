@@ -1220,7 +1220,7 @@ void setupPreferences() {
   modus_innen = prefs.getString("modus_innen", "hardware");
   modus_aussen = prefs.getString("modus_aussen", "hardware");
   mqttAktiv = prefs.getBool("mqtt", false);
-  schutzVorAuskuehlungAktiv = prefs.getBool("tempschutz", false);
+  schutzVorAuskuehlungAktiv = prefs.getBool("tempschutz", true);
   minTempInnen = prefs.getFloat("min_temp", 12.0);
   prefs.end();
 }
