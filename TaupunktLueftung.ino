@@ -977,11 +977,11 @@ String getSettingsHtml() {
   html += "Mindestlaufzeit (Minuten): <input type='number' name='laufzeit' value='" + String(mindestLaufzeit_ms / 60000) + "' "
           "title='Mindestzeit, die die Lüftung nach dem Einschalten aktiv bleiben muss.\n"
           "Verhindert zu schnelles Ausschalten und schützt das Relais vor häufigem Schalten.\n"
-          "Tipp: 2–5 Minuten'><br>";
+          "Tipp: 2–5 Minuten (0 Minuten = deaktiviert).'><br>";
   html += "Mindestpause (Minuten): <input type='number' name='pause' value='" + String(mindestPause_ms / 60000) + "' "
           "title='Mindestwartezeit nach dem Ausschalten, bevor die Lüftung erneut aktiviert werden darf.\n"
           "Dient dem Geräteschutz und reduziert unwirksames Lüften im Grenzbereich.\n"
-          "Tipp: 5–10 Minuten als sanfte Sperre.'><br>";
+          "Tipp: 5–10 Minuten als sanfte Sperre (0 Minuten = deaktiviert).'><br>";
   html += "<input type='submit' value='Timer speichern'>";
   html += "</form></fieldset>";
 
