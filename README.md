@@ -18,6 +18,8 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 
 - Einstellbarer Temperaturschutz gegen Auskühlung
 
+- Einstellbare Verzögerungszeiten für den Lüfter/Relaisschutz in Grenzbereichen
+
 - MQTT-Schnittstelle (Publish & Subscribe) + Home Assistant Auto-Discovery
 
 - Modular: wählbare Sensorquelle (Hardware oder MQTT-Daten)
