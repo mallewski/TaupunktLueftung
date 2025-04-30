@@ -58,6 +58,10 @@ bool updateModeActive = false;
 bool schutzVorAuskuehlungAktiv = false;
 float minTempInnen = 12.0; // °C – Beispielwert
 float taupunktDifferenzSchwellwert = 4.0;
+unsigned long mindestLaufzeit_ms = 2 * 60 * 1000;
+unsigned long mindestPause_ms = 5 * 60 * 1000;
+unsigned long letzteEinAktivierung = 0;
+unsigned long letzteAusAktivierung = 0;
 
 float t_in = NAN, rh_in = NAN, td_in = NAN;
 float t_out = NAN, rh_out = NAN, td_out = NAN;
@@ -122,32 +126,45 @@ void aktualisiereSensoren() {
 
 void steuerlogik() {
   if (isnan(td_in) || isnan(td_out)) return;
-  float diff = td_in - td_out;
 
-  if (diff >= taupunktDifferenzSchwellwert) {
-    if (!lueftungAktiv) {
-      digitalWrite(RELAY_LED_PIN, HIGH);
-      lueftungAktiv = true;
-      logEvent("Lüftung aktiviert");
-    }
-    setLEDs(true, false, false);
-    statusText = "Trocknend - Lüftung aktiv";
-  } else {
-    if (lueftungAktiv) {
-      digitalWrite(RELAY_LED_PIN, LOW);
-      lueftungAktiv = false;
-      logEvent("Lüftung deaktiviert");
-    }
-    if (diff <= -taupunktDifferenzSchwellwert) {
-      setLEDs(false, true, false);
-      statusText = "Befeuchtend - Lüftung aus";
-    } else {
-      setLEDs(false, false, true);
-      statusText = "Neutral - Lüftung aus";
-    }
-    publishAllStates();
+  float diff = td_in - td_out;
+  unsigned long jetzt = millis();
+
+  bool darfEinschalten = (diff >= taupunktDifferenzSchwellwert) && 
+                         (!lueftungAktiv) && 
+                         (jetzt - letzteAusAktivierung >= mindestPause_ms);
+
+  bool darfAusschalten = (diff < taupunktDifferenzSchwellwert) &&
+                         (lueftungAktiv) &&
+                         (jetzt - letzteEinAktivierung >= mindestLaufzeit_ms);
+
+  if (darfEinschalten) {
+    digitalWrite(RELAY_LED_PIN, HIGH);
+    lueftungAktiv = true;
+    letzteEinAktivierung = jetzt;
+    logEvent("Lüftung aktiviert (Timer berücksichtigt)");
   }
 
+  if (darfAusschalten) {
+    digitalWrite(RELAY_LED_PIN, LOW);
+    lueftungAktiv = false;
+    letzteAusAktivierung = jetzt;
+    logEvent("Lüftung deaktiviert (Timer berücksichtigt)");
+  }
+
+  // LED + Statustext
+  if (lueftungAktiv) {
+    setLEDs(true, false, false);
+    statusText = "Trocknend - Lüftung aktiv";
+  } else if (diff <= -taupunktDifferenzSchwellwert) {
+    setLEDs(false, true, false);
+    statusText = "Befeuchtend - Lüftung aus";
+  } else {
+    setLEDs(false, false, true);
+    statusText = "Neutral - Lüftung aus";
+  }
+
+  // Historie aktualisieren
   td_in_history[history_index] = td_in;
   td_out_history[history_index] = td_out;
   td_diff_history[history_index] = diff;
@@ -155,6 +172,8 @@ void steuerlogik() {
   rh_out_history[history_index] = rh_out;
   status_history[history_index] = lueftungAktiv;
   history_index = (history_index + 1) % MAX_POINTS;
+
+  publishAllStates(); // immer senden, unabhängig von Statuswechsel
 }
 
 //MQTT Empfang
@@ -644,6 +663,7 @@ String getMainScripts() {
         setInterval(updateChart, 5000);
         ajaxFormHandler("tempschutzForm", "Temperaturschutz gespeichert.");
         ajaxFormHandler("schwelleForm", "Schwellenwert gespeichert.");
+        ajaxFormHandler("timerForm", "Timer gespeichert.");
         ajaxFormHandler("modusForm", "Sensor-Modus gespeichert.");
         ajaxFormHandler("mqttConfigForm", "MQTT-Verbindung gespeichert.");
         ajaxFormHandler("mqttTopicsForm", "MQTT Topics gespeichert.");
@@ -932,6 +952,15 @@ String getSettingsHtml() {
           "title='Empfohlener Wert: 4,0 °C\n\nDie Außenluft muss mindestens so viel \"trockener\" sein (Taupunkt-Differenz), damit gelüftet wird.\n\nTipp: Höher = vorsichtiger, niedriger = aggressiver lüften.'><br>";
   html += "<input type='submit' value='Schwellenwert speichern'>";
   html += "</form></fieldset>";
+  
+  // Lueftungstimer
+  html += "<fieldset><legend>Lüftungstimer</legend>";
+  html += "<form id='timerForm' method='POST' action='/timer'>";
+  html += "Mindestlaufzeit (Sekunden): <input type='number' name='laufzeit' value='" + String(mindestLaufzeit_ms / 1000) + "'><br>";
+  html += "Mindestpause (Sekunden): <input type='number' name='pause' value='" + String(mindestPause_ms / 1000) + "'><br>";
+  html += "<input type='submit' value='Timer speichern'>";
+  html += "</form></fieldset>";
+
 
   // Sensorquelle
   bool disabled = !mqttAktiv;
@@ -1082,6 +1111,22 @@ void handleSetSchwelle() {
   }
   redirectToSettings();
 }
+//Lueftungstimer
+void handleTimerSettings() {
+  if (server.hasArg("laufzeit")) {
+    mindestLaufzeit_ms = server.arg("laufzeit").toInt() * 1000UL;
+  }
+  if (server.hasArg("pause")) {
+    mindestPause_ms = server.arg("pause").toInt() * 1000UL;
+  }
+
+  prefs.begin("config", false);
+  prefs.putULong("min_on", mindestLaufzeit_ms);
+  prefs.putULong("min_off", mindestPause_ms);
+  prefs.end();
+
+  redirectToSettings();
+}
 //Modus (eigene Sensoren oder MQTT)
 void handleSetModus() {
   if (server.hasArg("modus_innen")) modus_innen = server.arg("modus_innen");
@@ -1213,6 +1258,8 @@ void setupSensoren() {
 void setupPreferences() {
   prefs.begin("config", true);
   taupunktDifferenzSchwellwert = prefs.getFloat("schwelle", 4.0);
+  mindestLaufzeit_ms = prefs.getULong("min_on", 2 * 60 * 1000);
+  mindestPause_ms = prefs.getULong("min_off", 5 * 60 * 1000);
   modus_innen = prefs.getString("modus_innen", "hardware");
   modus_aussen = prefs.getString("modus_aussen", "hardware");
   mqttAktiv = prefs.getBool("mqtt", false);
@@ -1239,6 +1286,7 @@ void setupWebServer() {
   server.on("/", handleRoot);
   server.on("/tempschutz", HTTP_POST, handleTempSchutz);
   server.on("/setSchwelle", HTTP_POST, handleSetSchwelle);
+  server.on("/timer", HTTP_POST, handleTimerSettings);
   server.on("/mqttconfig", HTTP_POST, handleMQTTConfig);
   server.on("/mqtttopics", HTTP_POST, handleMQTTTopics);
   server.on("/setMQTT", handleSetMQTT);
