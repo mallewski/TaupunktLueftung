@@ -11,6 +11,8 @@
 #include <time.h>
 #include <Update.h>
 #include "secrets.h"
+#include <WiFiManager.h>
+
 
 //Parameter
 #define NAME "TaupunktLueftung"
@@ -34,15 +36,12 @@ PubSubClient mqttClient(espClient);
 Adafruit_SHT31 shtInnen = Adafruit_SHT31();
 DHT dht(DHTPIN, DHTTYPE);
 
-char ssid[32] = WIFI_SSID;
-char password[64] = WIFI_PASSWORD;
-
 const char* configPassword = CONFIG_PASSWORD;
 
-char mqttServer[64] = MQTT_SERVER;
-int mqttPort = MQTT_PORT;
-char mqttUser[32] = MQTT_USER;
-char mqttPassword[64] = MQTT_PASSWORD;
+char mqttServer[64] = "";     // leer oder z.B. "192.168.1.100"
+int mqttPort = 1883;          // Standard-MQTT-Port
+char mqttUser[32] = "";
+char mqttPassword[64] = "";
 
 String mqttTempInnen = "sensors/temp_innen";
 String mqttHygroInnen = "sensors/hygro_innen";
@@ -51,7 +50,7 @@ String mqttHygroAussen = "sensors/hygro_aussen";
 String mqttPublishPrefix = "taupunktlueftung/";
 String mqttDiscoveryPrefix = "homeassistant/";
 
-bool mqttAktiv = true;
+bool mqttAktiv = false;
 String modus_innen = "hardware";
 String modus_aussen = "hardware";
 bool updateModeActive = false;
@@ -242,7 +241,7 @@ void publishMQTTDiscovery() {
     if (debugMQTT) {
       Serial.println("Sende Discovery an Topic: " + configTopic);
       Serial.println("Payload: " + payload);
-      Serial.println(ok ? "✔️ Publish erfolgreich" : "❌ Publish FEHLGESCHLAGEN");
+      Serial.println(ok ? "✔️ Publish erfolgreich" : "Publish FEHLGESCHLAGEN");
     }
   }
   if (debugMQTT) {
@@ -1142,9 +1141,9 @@ void handleMQTTTopics() {
 void handleMQTTDiscovery() {
   if (mqttClient.connected()) {
     publishMQTTDiscovery();
-    Serial.println("🟢 MQTT ist verbunden. Sende Discovery...");
+    Serial.println("MQTT ist verbunden. Sende Discovery...");
   } else {
-    Serial.println("🔴 MQTT NICHT verbunden – keine Discovery gesendet.");
+    Serial.println("MQTT NICHT verbunden – keine Discovery gesendet.");
   }
   redirectToSettings();
 }
@@ -1181,15 +1180,22 @@ void prepareForFirmwareUpdate() {
 }
 
 // --- Setup --->
-//Setup Wifi
+//Setup Wifi - WLAN-Verbindung herstellen (via Access Point falls keine bekannt)
 void setupWiFi() {
-  WiFi.begin(ssid, password);
-  Serial.print("WLAN verbinden");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  WiFi.mode(WIFI_STA);  // Nur Station-Modus
+  WiFiManager wm;
+
+  wm.setDebugOutput(false);
+
+  // Optional: Timeout nach 180 Sekunden ohne Verbindung
+  wm.setTimeout(180);
+
+  if (!wm.autoConnect("TaupunktLueftung-Setup")) {
+    Serial.println("Kein WLAN verbunden. Starte im Offline-Modus...");
+    return;  // Fahre im Offline-Modus fort
   }
-  Serial.println("\n[OK] WLAN verbunden: " + WiFi.localIP().toString());
+
+  Serial.println("WLAN verbunden: " + WiFi.localIP().toString());
 }
 //Setup Sensoren
 void setupSensoren() {
@@ -1220,7 +1226,10 @@ void setupMQTT() {
   mqttClient.setServer(mqttServer, mqttPort);
   mqttClient.setKeepAlive(60);
   mqttClient.setCallback(mqttCallback);
-  if (mqttAktiv) reconnectMQTT();
+  if (WiFi.status() == WL_CONNECTED) {
+    configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org");
+    if (mqttAktiv) reconnectMQTT();
+  }
 }
 //Setup Web Server
 void setupWebServer() {

@@ -12,6 +12,8 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 
 - Taupunktgesteuerte Lüftung zur gezielten Entfeuchtung - ein Algorithmus zur Taupunktanalyse steuert die Lüftung je nach Differenz.
 
+- Die WLAN-Zugangsdaten werden über den Access Point (TaupunktLueftung-Setup) im Browser konfiguriert und dauerhaft gespeichert. Kein manuelles Editieren in secrets.h nötig.
+
 - Webinterface mit Live-Datenanzeige, Echtzeitdiagrammen und Konfigurationbereich
 
 - Einstellbarer Temperaturschutz gegen Auskühlung
@@ -88,7 +90,6 @@ LED's: Anode (langer Pin) → Vorwiderstand → GPIO / Kathode (kurzer Pin) → 
 - **Webinterface:** Alle Einstellungen wie MQTT, Sensorquellen und Schwellenwerte  
   sind direkt über das Browser-Interface konfigurierbar.
 - **Außensensor (DHT22) wettergeschützt montieren**, z. B. unter einem Vordach oder in einem geeigneten Gehäuse.
-- **WLAN-Verbindung** Die `secrets_template.h` muss in `secrets.h` umbenannt und die Zugangsdaten für das WLAN eingetragen werden.
 
 ### **Lüfterempfehlung**
 
