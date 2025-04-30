@@ -35,29 +35,13 @@ Lade den Projektordner herunter (GitHub oder ZIP)
 
 Datei secrets_template.h umbenennen zu secrets.h
 
-Trage dort deine WLAN-Zugangsdaten und ggf. MQTT-Parameter ein
-
-(-> für mqtt autodiscovery beachte [Debug-Hinweise](debug_hinweise.md))
+Trage dort dein OTA-Passwort ein (wenn gewünscht).
 
 
 
 ---
 
-**4. ESP32 verbinden und flashen**
-
-Schließe das Board per USB an
-
-Wähle den richtigen COM-Port unter Werkzeuge → Port
-
-Klicke auf "Hochladen"
-
-Nach dem Flashen → Seriellen Monitor öffnen (115200 Baud) → Status prüfen
-
-
-
----
-
-**5. Hardware aufbauen & verdrahten**
+**4. Hardware aufbauen & verdrahten**
 
 Sensoren anschließen:
 
@@ -76,7 +60,7 @@ Tipp: Kabellängen für Sensoren möglichst kurz halten (ca. max. 2 m, abgesch
 
 ---
 
-**6. Gehäusewahl**
+**5. Gehäusewahl**
 
 Innen: z. B. Verteilerdose mit Platz für ESP32, Relais, LEDs, ggf. Innensensor
 
@@ -87,7 +71,38 @@ Außen: wettergeschütztes Gehäuse mit Belüftung für DHT22
 
 ---
 
-**7. Lüfter anschließen**
+**6. ESP32 verbinden und flashen**
+
+Schließe das Board per USB an
+
+Wähle den richtigen COM-Port unter Werkzeuge → Port
+
+Klicke auf "Hochladen"
+
+Nach dem Flashen → Seriellen Monitor öffnen (115200 Baud) → Status prüfen
+
+
+
+---
+
+**7. WLAN einrichten**
+
+Wenn kein WLAN gespeichert oder nicht erreichbar:
+→ ESP startet im Access Point-Modus
+
+Verbinde dich mit dem WLAN TaupunktLueftung-Setup
+
+Einfach nach dem WLAN mit der SSID "TaupunktLueftung-Setup" suchen und damit verbinden (oder im Browser öffnen: http://192.168.4.1)
+
+Dein WLAN auswählen und Passwort eingeben
+
+ESP verbindet sich automatisch, speichert die Daten und startet neu
+
+
+
+---
+
+**8. Lüfter anschließen**
 
 230 V-Ventilatoren über das Relais schalten
 
@@ -97,12 +112,13 @@ Alternativ: MQTT-gesteuerte Steckdose zur Lüftersteuerung (s. README)
 
 ---
 
-**8. Fertig!**
+**9. Fertig!**
 
-Webinterface aufrufen: http://[IP-Adresse deines ESP32] (wird auch in seriellem Monitor ausgegeben)
+Webinterface aufrufen: http://[IP-Adresse deines ESP32] (IP-Adresse wird im seriellen Monitor ausgegeben. Alternativ im Router nachschauen)
 
-Einstellungen wie MQTT, Sensorquellen etc. im Webinterface anpassen
+Einstellungen wie MQTT, Sensorquellen, Temperaturschutz etc. im Webinterface anpassen
+
+(-> für mqtt autodiscovery beachte [Debug-Hinweise](debug_hinweise.md))
 
 Live-Daten und Charts direkt im Browser
-
 
