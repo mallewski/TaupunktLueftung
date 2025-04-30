@@ -1,5 +1,5 @@
-// TaupunktLueftung v2.0
-// Vollständige Version mit Chart-Update via AJAX, MQTT-Setup, LED-Steuerung, Webinterface
+// TaupunktLueftung v2.4
+// Vollständige Version mit Chart-Update via AJAX, MQTT-Setup, LED-Steuerung, Webinterface, WLAN-Konfig per eigenem Acesspoint, Lueftungstimer
 
 #include <Wire.h>
 #include <WiFi.h>
@@ -17,7 +17,7 @@
 
 //Parameter
 #define NAME "TaupunktLueftung"
-#define FIRMWARE_VERSION "v3.0"
+#define FIRMWARE_VERSION "v2.4"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
@@ -60,8 +60,8 @@ float minTempInnen = 12.0; // °C – Beispielwert
 float taupunktDifferenzSchwellwert = 4.0;
 unsigned long mindestLaufzeit_ms = 2 * 60 * 1000;
 unsigned long mindestPause_ms = 5 * 60 * 1000;
-unsigned long letzteEinAktivierung = 0;
-unsigned long letzteAusAktivierung = 0;
+unsigned long letzteAktivierung = 0;
+unsigned long letzteDeaktivierung = 0;
 
 float t_in = NAN, rh_in = NAN, td_in = NAN;
 float t_out = NAN, rh_out = NAN, td_out = NAN;
@@ -132,23 +132,23 @@ void steuerlogik() {
 
   bool darfEinschalten = (diff >= taupunktDifferenzSchwellwert) && 
                          (!lueftungAktiv) && 
-                         (jetzt - letzteAusAktivierung >= mindestPause_ms);
+                         (jetzt - letzteDeaktivierung >= mindestPause_ms);
 
   bool darfAusschalten = (diff < taupunktDifferenzSchwellwert) &&
                          (lueftungAktiv) &&
-                         (jetzt - letzteEinAktivierung >= mindestLaufzeit_ms);
+                         (jetzt - letzteAktivierung >= mindestLaufzeit_ms);
 
   if (darfEinschalten) {
     digitalWrite(RELAY_LED_PIN, HIGH);
     lueftungAktiv = true;
-    letzteEinAktivierung = jetzt;
+    letzteAktivierung = millis();
     logEvent("Lüftung aktiviert (Timer berücksichtigt)");
   }
 
   if (darfAusschalten) {
     digitalWrite(RELAY_LED_PIN, LOW);
     lueftungAktiv = false;
-    letzteAusAktivierung = jetzt;
+    letzteDeaktivierung = millis();
     logEvent("Lüftung deaktiviert (Timer berücksichtigt)");
   }
 
@@ -376,6 +376,21 @@ void handleLiveData() {
   String sichererStatus = statusText;
   sichererStatus.replace("\"", "'");
 
+  unsigned long now = millis();
+  String timerInfo = "";
+
+  if (!lueftungAktiv && now - letzteDeaktivierung < mindestPause_ms) {
+    unsigned long remaining = (mindestPause_ms - (now - letzteDeaktivierung)) / 1000;
+    char buffer[6];
+    snprintf(buffer, sizeof(buffer), "%lu:%02lu", remaining / 60, remaining % 60);
+    timerInfo = String(buffer) + " min Sperre";
+  } else if (lueftungAktiv && now - letzteAktivierung < mindestLaufzeit_ms) {
+    unsigned long remaining = (mindestLaufzeit_ms - (now - letzteAktivierung)) / 1000;
+    char buffer[6];
+    snprintf(buffer, sizeof(buffer), "%lu:%02lu", remaining / 60, remaining % 60);
+    timerInfo = String(buffer) + " min Mindestlaufzeit";
+  }
+
   String json = "{";
   json += "\"t_in\":" + String(t_in, 1) + ",";
   json += "\"rh_in\":" + String(rh_in, 1) + ",";
@@ -385,6 +400,7 @@ void handleLiveData() {
   json += "\"td_out\":" + String(td_out, 1) + ",";
   json += "\"zeit\":\"" + sichereUhrzeit + "\",";
   json += "\"status\":\"" + sichererStatus + "\"";
+  json += ",\"timer\":\"" + timerInfo + "\"";
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -551,6 +567,7 @@ String getMainScripts() {
           const data = await res.json();
           document.getElementById('zeit').textContent = data.zeit;
           document.getElementById('status_text').textContent = data.status;
+          document.getElementById('timer_info').textContent = data.timer || "–";
           updateElementValue('t_in', data.t_in, '°C');
           updateElementValue('rh_in', data.rh_in, '%');
           updateElementValue('t_out', data.t_out, '°C');
@@ -914,6 +931,7 @@ String getDashboardHtml() {
   html += "<strong>Taupunkt innen:</strong> <span id='td_in'></span><br>";
   html += "<strong>Taupunkt außen:</strong> <span id='td_out'></span></p></div>";
   html += "<p><strong>Status:</strong> <span id='status_text'></span></p>";
+  html += "<p><strong>Timer:</strong> <span id='timer_info'></span></p>";
   html += "<p><strong>Letztes Ereignis:</strong> " + logEintrag + "</p>";
   html += "<form id='rangeForm' onsubmit='return false;'>"
           "<label><strong>Zeitraum:</strong></label> "
@@ -945,7 +963,7 @@ String getSettingsHtml() {
   html += "<input type='submit' value='Speichern'></form></fieldset>";
 
   // Taupunktdifferenz-Schwellenwert
-  html += "<fieldset><legend>Schwellenwert</legend>";
+  html += "<fieldset><legend>Taupunkt-Differenz-Schwellenwert</legend>";
   html += "<form id='schwelleForm' method='POST' action='/setSchwelle'>";
   html += "Taupunkt-Differenz (°C), ab der gelüftet wird:<br>";
   html += "<input type='number' step='0.1' name='schwelle' value='" + String(taupunktDifferenzSchwellwert, 1) + "' "
@@ -954,13 +972,18 @@ String getSettingsHtml() {
   html += "</form></fieldset>";
   
   // Lueftungstimer
-  html += "<fieldset><legend>Lüftungstimer</legend>";
+  html += "<fieldset><legend>Lüfter/Relais-Schutzzeiten</legend>";
   html += "<form id='timerForm' method='POST' action='/timer'>";
-  html += "Mindestlaufzeit (Sekunden): <input type='number' name='laufzeit' value='" + String(mindestLaufzeit_ms / 1000) + "'><br>";
-  html += "Mindestpause (Sekunden): <input type='number' name='pause' value='" + String(mindestPause_ms / 1000) + "'><br>";
+  html += "Mindestlaufzeit (Minuten): <input type='number' name='laufzeit' value='" + String(mindestLaufzeit_ms / 60000) + "' "
+          "title='Mindestzeit, die die Lüftung nach dem Einschalten aktiv bleiben muss.\n"
+          "Verhindert zu schnelles Ausschalten und schützt das Relais vor häufigem Schalten.\n"
+          "Tipp: 2–5 Minuten'><br>";
+  html += "Mindestpause (Minuten): <input type='number' name='pause' value='" + String(mindestPause_ms / 60000) + "' "
+          "title='Mindestwartezeit nach dem Ausschalten, bevor die Lüftung erneut aktiviert werden darf.\n"
+          "Dient dem Geräteschutz und reduziert unwirksames Lüften im Grenzbereich.\n"
+          "Tipp: 5–10 Minuten als sanfte Sperre.'><br>";
   html += "<input type='submit' value='Timer speichern'>";
   html += "</form></fieldset>";
-
 
   // Sensorquelle
   bool disabled = !mqttAktiv;
@@ -1114,15 +1137,15 @@ void handleSetSchwelle() {
 //Lueftungstimer
 void handleTimerSettings() {
   if (server.hasArg("laufzeit")) {
-    mindestLaufzeit_ms = server.arg("laufzeit").toInt() * 1000UL;
+    mindestLaufzeit_ms = server.arg("laufzeit").toInt() * 60 * 1000;
   }
   if (server.hasArg("pause")) {
-    mindestPause_ms = server.arg("pause").toInt() * 1000UL;
+    mindestPause_ms = server.arg("pause").toInt() * 60 * 1000;
   }
 
   prefs.begin("config", false);
-  prefs.putULong("min_on", mindestLaufzeit_ms);
-  prefs.putULong("min_off", mindestPause_ms);
+  prefs.putULong("min_on", mindestLaufzeit_ms / 60000);
+  prefs.putULong("min_off", mindestPause_ms / 60000);
   prefs.end();
 
   redirectToSettings();
@@ -1258,8 +1281,10 @@ void setupSensoren() {
 void setupPreferences() {
   prefs.begin("config", true);
   taupunktDifferenzSchwellwert = prefs.getFloat("schwelle", 4.0);
-  mindestLaufzeit_ms = prefs.getULong("min_on", 2 * 60 * 1000);
-  mindestPause_ms = prefs.getULong("min_off", 5 * 60 * 1000);
+  mindestLaufzeit_ms = prefs.getUInt("min_laufzeit", 2) * 60 * 1000;
+  mindestPause_ms = prefs.getUInt("min_pause", 5) * 60 * 1000;
+  letzteAktivierung = millis() - mindestLaufzeit_ms;
+  letzteDeaktivierung = millis() - mindestPause_ms;
   modus_innen = prefs.getString("modus_innen", "hardware");
   modus_aussen = prefs.getString("modus_aussen", "hardware");
   mqttAktiv = prefs.getBool("mqtt", false);
