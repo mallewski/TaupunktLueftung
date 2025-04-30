@@ -12,11 +12,13 @@
 #include <Update.h>
 #include "secrets.h"
 #include <WiFiManager.h>
+// #include "nvs_flash.h"
+
 
 
 //Parameter
 #define NAME "TaupunktLueftung"
-#define FIRMWARE_VERSION "v2.0"
+#define FIRMWARE_VERSION "v3.0"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
@@ -1182,6 +1184,9 @@ void prepareForFirmwareUpdate() {
 // --- Setup --->
 //Setup Wifi - WLAN-Verbindung herstellen (via Access Point falls keine bekannt)
 void setupWiFi() {
+  WiFi.disconnect(true, true);  // trennt und löscht die gespeicherten SSID+Passwort
+  delay(1000);
+
   WiFi.mode(WIFI_STA);  // Nur Station-Modus
   WiFiManager wm;
 
@@ -1214,7 +1219,7 @@ void setupPreferences() {
   taupunktDifferenzSchwellwert = prefs.getFloat("schwelle", 4.0);
   modus_innen = prefs.getString("modus_innen", "hardware");
   modus_aussen = prefs.getString("modus_aussen", "hardware");
-  mqttAktiv = prefs.getBool("mqtt", true);
+  mqttAktiv = prefs.getBool("mqtt", false);
   schutzVorAuskuehlungAktiv = prefs.getBool("tempschutz", false);
   minTempInnen = prefs.getFloat("min_temp", 12.0);
   prefs.end();
@@ -1296,6 +1301,10 @@ void setupWebServer() {
 void setup() {
   Serial.begin(115200);
   esp_log_level_set("*", ESP_LOG_VERBOSE);
+
+  // NVS komplett löschen (WLAN + andere prefs)
+  //nvs_flash_erase();  // !! löscht ALLE gespeicherten Daten im NVS (inkl. WiFi und Preferences)
+  //nvs_flash_init();
 
   setupWiFi();
   setupSensoren();
