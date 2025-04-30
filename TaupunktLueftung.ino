@@ -15,7 +15,6 @@
 // #include "nvs_flash.h"
 
 
-
 //Parameter
 #define NAME "TaupunktLueftung"
 #define FIRMWARE_VERSION "v3.0"
@@ -1184,9 +1183,6 @@ void prepareForFirmwareUpdate() {
 // --- Setup --->
 //Setup Wifi - WLAN-Verbindung herstellen (via Access Point falls keine bekannt)
 void setupWiFi() {
-  WiFi.disconnect(true, true);  // trennt und löscht die gespeicherten SSID+Passwort
-  delay(1000);
-
   WiFi.mode(WIFI_STA);  // Nur Station-Modus
   WiFiManager wm;
 
