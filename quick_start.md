@@ -23,6 +23,8 @@ Dann: Werkzeuge → Board → Boardverwalter → "ESP32" installieren
 
 Board auswählen: z. B. "ESP32 Dev Module"
 
+Board vi USB anschließen und verbinden
+
 
 
 ---
@@ -47,7 +49,7 @@ Sensoren anschließen:
 
 Innen z. B. SHT31 via I2C (GPIO21+22)
 
-Außen z. B. DHT22 (GPIO17)
+Außen z. B. DHT22 (GPIO17) oder ebenfalls SHT31
 
 
 Relais-Modul an GPIO16
