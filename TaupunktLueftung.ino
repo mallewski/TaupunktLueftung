@@ -62,6 +62,9 @@ unsigned long mindestLaufzeit_ms = 2 * 60 * 1000;
 unsigned long mindestPause_ms = 5 * 60 * 1000;
 unsigned long letzteAktivierung = 0;
 unsigned long letzteDeaktivierung = 0;
+bool konstanteFeuchteAktiv = false;
+float zielFeuchteInnen = 45.0;
+float hysterese = 2.0; // % RH
 
 float t_in = NAN, rh_in = NAN, td_in = NAN;
 float t_out = NAN, rh_out = NAN, td_out = NAN;
@@ -125,13 +128,93 @@ void aktualisiereSensoren() {
 }
 
 void steuerlogik() {
-  if (isnan(td_in) || isnan(td_out)) return;
+  if (isnan(td_in) || isnan(td_out) || isnan(rh_in) || isnan(t_in)) return;
 
   float diff = td_in - td_out;
   unsigned long jetzt = millis();
 
-  bool darfEinschalten = (diff >= taupunktDifferenzSchwellwert) && 
-                         (!lueftungAktiv) && 
+  // === 1. Austrocknungsschutz ===
+  if (schutzVorAustrocknungAktiv && rh_in < minFeuchteInnen) {
+    if (lueftungAktiv) {
+      digitalWrite(RELAY_LED_PIN, LOW);
+      lueftungAktiv = false;
+      letzteDeaktivierung = jetzt;
+      logEvent("Lüftung deaktiviert – Austrocknungsschutz");
+    }
+    setLEDs(false, false, true);
+    statusText = "Austrocknungsschutz – Lüftung aus";
+    publishAllStates();
+    return;
+  }
+
+  // === 2. Temperaturschutz ===
+  if (schutzVorAuskuehlungAktiv && t_in < minTempInnen) {
+    if (lueftungAktiv) {
+      digitalWrite(RELAY_LED_PIN, LOW);
+      lueftungAktiv = false;
+      letzteDeaktivierung = jetzt;
+      logEvent("Lüftung deaktiviert – Temperaturschutz");
+    }
+    setLEDs(false, false, true);
+    statusText = "Temperaturschutz – Lüftung aus";
+    publishAllStates();
+    return;
+  }
+
+  // === 3. Feuchteregelung aktiv? ===
+  if (konstanteFeuchteAktiv) {
+    float rhSoll_min = zielFeuchteInnen - hysterese;
+    float rhSoll_max = zielFeuchteInnen + hysterese;
+
+    if (rh_in < rhSoll_min && td_out > td_in + 1.0) {
+      // Außenluft hat höheren Taupunkt – Befeuchten sinnvoll
+      digitalWrite(RELAY_LED_PIN, HIGH);
+      if (!lueftungAktiv) {
+        letzteAktivierung = jetzt;
+        logEvent("Lüftung aktiviert – Befeuchtung (Regelung)");
+      }
+      lueftungAktiv = true;
+      setLEDs(false, false, true);
+      statusText = "Regelung: Befeuchten (Lüftung AN)";
+    } 
+    else if (rh_in > rhSoll_max && td_out < td_in - 1.0) {
+      // Außenluft ist deutlich trockener – Entfeuchtung sinnvoll
+      digitalWrite(RELAY_LED_PIN, HIGH);
+      if (!lueftungAktiv) {
+        letzteAktivierung = jetzt;
+        logEvent("Lüftung aktiviert – Entfeuchtung (Regelung)");
+      }
+      lueftungAktiv = true;
+      setLEDs(true, false, false);
+      statusText = "Regelung: Entfeuchten (Lüftung AN)";
+    } 
+    else {
+      if (lueftungAktiv) {
+        digitalWrite(RELAY_LED_PIN, LOW);
+        letzteDeaktivierung = jetzt;
+        logEvent("Lüftung deaktiviert – RH im Zielbereich");
+      }
+      lueftungAktiv = false;
+      setLEDs(false, true, false);
+      statusText = "Regelung: RH im Zielbereich – Lüftung AUS";
+    }
+
+    // Historie aktualisieren
+    td_in_history[history_index] = td_in;
+    td_out_history[history_index] = td_out;
+    td_diff_history[history_index] = diff;
+    rh_in_history[history_index] = rh_in;
+    rh_out_history[history_index] = rh_out;
+    status_history[history_index] = lueftungAktiv;
+    history_index = (history_index + 1) % MAX_POINTS;
+
+    publishAllStates();
+    return;
+  }
+
+  // === 4. Klassische Taupunktlogik ===
+  bool darfEinschalten = (diff >= taupunktDifferenzSchwellwert) &&
+                         (!lueftungAktiv) &&
                          (jetzt - letzteDeaktivierung >= mindestPause_ms);
 
   bool darfAusschalten = (diff < taupunktDifferenzSchwellwert) &&
@@ -141,27 +224,26 @@ void steuerlogik() {
   if (darfEinschalten) {
     digitalWrite(RELAY_LED_PIN, HIGH);
     lueftungAktiv = true;
-    letzteAktivierung = millis();
-    logEvent("Lüftung aktiviert (Timer berücksichtigt)");
+    letzteAktivierung = jetzt;
+    logEvent("Lüftung aktiviert (Taupunktdifferenz)");
   }
 
   if (darfAusschalten) {
     digitalWrite(RELAY_LED_PIN, LOW);
     lueftungAktiv = false;
-    letzteDeaktivierung = millis();
-    logEvent("Lüftung deaktiviert (Timer berücksichtigt)");
+    letzteDeaktivierung = jetzt;
+    logEvent("Lüftung deaktiviert (Taupunktdifferenz)");
   }
 
-  // LED + Statustext
   if (lueftungAktiv) {
     setLEDs(true, false, false);
-    statusText = "Trocknend - Lüftung aktiv";
+    statusText = "Trocknend – Lüftung aktiv";
   } else if (diff <= -taupunktDifferenzSchwellwert) {
     setLEDs(false, true, false);
-    statusText = "Befeuchtend - Lüftung aus";
+    statusText = "Befeuchtend – Lüftung aus";
   } else {
     setLEDs(false, false, true);
-    statusText = "Neutral - Lüftung aus";
+    statusText = "Neutral – Lüftung aus";
   }
 
   // Historie aktualisieren
@@ -173,7 +255,7 @@ void steuerlogik() {
   status_history[history_index] = lueftungAktiv;
   history_index = (history_index + 1) % MAX_POINTS;
 
-  publishAllStates(); // immer senden, unabhängig von Statuswechsel
+  publishAllStates();
 }
 
 //MQTT Empfang
@@ -679,6 +761,8 @@ String getMainScripts() {
         setInterval(updateLiveData, 5000);
         setInterval(updateChart, 5000);
         ajaxFormHandler("tempschutzForm", "Temperaturschutz gespeichert.");
+        ajaxFormHandler("austrocknungsschutzForm", "Austrocknungsschutz gespeichert.");
+        ajaxFormHandler("feuchteregelungForm", "Feuchteregelung gespeichert.");
         ajaxFormHandler("schwelleForm", "Schwellenwert gespeichert.");
         ajaxFormHandler("timerForm", "Timer gespeichert.");
         ajaxFormHandler("modusForm", "Sensor-Modus gespeichert.");
@@ -961,6 +1045,27 @@ String getSettingsHtml() {
   html += "> Aktivieren</label><br>";
   html += "Mindest-Innentemperatur (°C): <input type='number' step='0.1' name='min_temp' value='" + String(minTempInnen, 1) + "'><br>";
   html += "<input type='submit' value='Speichern'></form></fieldset>";
+  
+  // Austrocknungsschutz
+  html += "<fieldset><legend>Austrocknungsschutz</legend>";
+  html += "<form id='austrocknungsschutzForm' method='POST' action='/austrocknungsschutz'>";
+  html += "<label><input type='checkbox' name='aktiv'";
+  if (schutzVorAustrocknungAktiv) html += " checked";
+  html += "> Aktivieren</label><br>";
+  html += "Mindest-RH innen (%): <input type='number' step='0.1' name='min_rh' value='" + String(minFeuchteInnen, 1) + "'><br>";
+  html += "<input type='submit' value='Speichern'>";
+  html += "</form></fieldset>";
+
+  // Feuchteregelung
+  html += "<fieldset><legend>Feuchteregelung</legend>";
+  html += "<form id='feuchteregelungForm' method='POST' action='/feuchteregelung'>";
+  html += "<label><input type='checkbox' name='aktiv'";
+  if (konstanteFeuchteAktiv) html += " checked";
+  html += "> Aktivieren</label><br>";
+  html += "Ziel-RH innen (%): <input type='number' step='0.1' name='ziel_rh' value='" + String(zielFeuchteInnen, 1) + "'><br>";
+  html += "Hysterese (%): <input type='number' step='0.1' name='hysterese' value='" + String(hysterese, 1) + "'><br>";
+  html += "<input type='submit' value='Speichern'>";
+  html += "</form></fieldset>";
 
   // Taupunktdifferenz-Schwellenwert
   html += "<fieldset><legend>Taupunkt-Differenz-Schwellenwert</legend>";
@@ -1123,6 +1228,34 @@ void handleTempSchutz() {
   prefs.end();
 
   redirectToSettings();
+}
+//Austrocknungsschutz
+void handleAustrocknungsschutz() {
+  schutzVorAustrocknungAktiv = server.hasArg("aktiv");
+  if (server.hasArg("min_rh")) {
+    minFeuchteInnen = server.arg("min_rh").toFloat();
+  }
+
+  prefs.begin("config", false);
+  prefs.putBool("austrocknungsschutz", schutzVorAustrocknungAktiv);
+  prefs.putFloat("min_rh", minFeuchteInnen);
+  prefs.end();
+
+  server.send(200, "text/plain", "OK");
+}
+//Feuchteregelung
+void handleFeuchteregelung() {
+  konstanteFeuchteAktiv = server.hasArg("aktiv");
+  if (server.hasArg("ziel_rh")) zielFeuchteInnen = server.arg("ziel_rh").toFloat();
+  if (server.hasArg("hysterese")) hysterese = server.arg("hysterese").toFloat();
+
+  prefs.begin("config", false);
+  prefs.putBool("feuchte_regelung", konstanteFeuchteAktiv);
+  prefs.putFloat("ziel_rh", zielFeuchteInnen);
+  prefs.putFloat("hysterese", hysterese);
+  prefs.end();
+
+  server.send(200, "text/plain", "OK");
 }
 //Schwellenwert
 void handleSetSchwelle() {
@@ -1310,6 +1443,8 @@ void setupWebServer() {
 
   server.on("/", handleRoot);
   server.on("/tempschutz", HTTP_POST, handleTempSchutz);
+  server.on("/austrocknungsschutz", HTTP_POST, handleAustrocknungsschutz);
+  server.on("/feuchteregelung", HTTP_POST, handleFeuchteregelung);
   server.on("/setSchwelle", HTTP_POST, handleSetSchwelle);
   server.on("/timer", HTTP_POST, handleTimerSettings);
   server.on("/mqttconfig", HTTP_POST, handleMQTTConfig);
