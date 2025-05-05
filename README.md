@@ -2,7 +2,7 @@
 
 TaupunktLueftung ist ein ESP32-basiertes System zur intelligenten Lüftungssteuerung auf Grundlage der Taupunktdifferenz. Es ist ideal zum gezielten Trocknen feuchter Räume wie Keller, Waschküchen oder Vorratskammern – effizient und vollautomatisch.
 
-Das System misst Temperatur und Luftfeuchtigkeit innen und außen (über Sensoren wie z. B. SHT31 oder DHT22 - oder per MQTT), berechnet daraus die Taupunkte und aktiviert die Lüftung nur dann, wenn trocknende Bedingungen vorliegen – also wenn die Außenluft in der Lage ist, Feuchtigkeit aufzunehmen, statt sie einzutragen.
+Das System misst Temperatur und Luftfeuchtigkeit innen und außen (über Sensoren wie z. B. SHT31 oder DHT22 - oder per MQTT), berechnet daraus die Taupunkte und aktiviert die Lüftung nur dann, wenn trocknende Bedingungen vorliegen – also wenn die Außenluft in der Lage ist, Feuchtigkeit aufzunehmen, statt sie einzutragen. (Im Feuchte-Regelungs-Modus wird versucht eine Wunschluftfeuchtigkeit durch be- oder entfeuchten zu halten.)
 
 Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup mit zwei Lüftern: einer zieht trockene Luft hinein, der andere führt feuchte Luft ab. Dadurch entsteht ein effektiver Luftstrom zum gezielten Entfeuchten.
 
@@ -12,11 +12,15 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 
 - Taupunktgesteuerte Lüftung zur gezielten Entfeuchtung - ein Algorithmus zur Taupunktanalyse steuert die Lüftung je nach Differenz.
 
-- Die WLAN-Zugangsdaten werden über den Access Point (TaupunktLueftung-Setup) im Browser konfiguriert und dauerhaft gespeichert. Kein manuelles Editieren in secrets.h nötig.
+- Die WLAN-Zugangsdaten werden über den Access Point (TaupunktLueftung-Setup) im Browser konfiguriert und dauerhaft gespeichert. Kein manuelles Editieren in secrets.h mehr nötig.
 
 - Webinterface mit Live-Datenanzeige, Echtzeitdiagrammen und Konfigurationbereich
 
-- Einstellbarer Temperaturschutz gegen Auskühlung
+- Optional einstellbarer Temperaturschutz gegen Auskühlung
+
+- Optional einstellbarer Austrocknungsschutz gegen zu niedrige Luftfeuchtigkeit
+
+- Optionaler Feuchte-Regelungs-Modus um eine gewünschte Luftfeuchtigkeit zu halten
 
 - Einstellbare Verzögerungszeiten für den Lüfter/Relaisschutz in Grenzbereichen
 
