@@ -56,6 +56,8 @@ String modus_innen = "hardware";
 String modus_aussen = "hardware";
 bool updateModeActive = false;
 bool schutzVorAuskuehlungAktiv = false;
+bool schutzVorAustrocknungAktiv = false;
+float minFeuchteInnen = 35.0; // Mindest-RH, z.B. 35 %
 float minTempInnen = 12.0; // °C – Beispielwert
 float taupunktDifferenzSchwellwert = 4.0;
 unsigned long mindestLaufzeit_ms = 2 * 60 * 1000;
@@ -1423,6 +1425,11 @@ void setupPreferences() {
   mqttAktiv = prefs.getBool("mqtt", false);
   schutzVorAuskuehlungAktiv = prefs.getBool("tempschutz", true);
   minTempInnen = prefs.getFloat("min_temp", 12.0);
+  schutzVorAustrocknungAktiv = prefs.getBool("austrocknungsschutz", false);
+  minFeuchteInnen = prefs.getFloat("min_rh", 35.0);
+  konstanteFeuchteAktiv = prefs.getBool("feuchte_regelung", false);
+  zielFeuchteInnen = prefs.getFloat("ziel_rh", 45.0);
+  hysterese = prefs.getFloat("hysterese", 2.0);
   prefs.end();
 }
 //Setup MQTT
