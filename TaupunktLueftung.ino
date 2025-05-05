@@ -1,4 +1,4 @@
-// TaupunktLueftung v2.4
+// TaupunktLueftung v3.0
 // Vollständige Version mit Chart-Update via AJAX, MQTT-Setup, LED-Steuerung, Webinterface, WLAN-Konfig per eigenem Acesspoint, Lueftungstimer
 
 #include <Wire.h>
@@ -17,7 +17,7 @@
 
 //Parameter
 #define NAME "TaupunktLueftung"
-#define FIRMWARE_VERSION "v2.4"
+#define FIRMWARE_VERSION "v3.0"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
