@@ -6,7 +6,6 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <Adafruit_SHT31.h>
-#include <DHT.h>
 #include <PubSubClient.h>
 #include <time.h>
 #include <Update.h>
@@ -22,10 +21,20 @@
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
 #define STATUS_YELLOW_PIN 19
-#define DHTPIN 17
-#define DHTTYPE DHT22
 #define MAX_POINTS 720
 #define SENSORZYKLUS_MS 5000
+
+//Umschaltung zwischen DHT22 (Pin17) und SHT31 für Sensor Außen
+#define SENSOR_TYP_AUSSEN_SHT31  // auskommentieren für DHT22
+#ifdef SENSOR_TYP_AUSSEN_SHT31
+Adafruit_SHT31 shtAussen = Adafruit_SHT31();
+#else
+#include <DHT.h>
+#define DHTPIN 17
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
+#endif
+
 
 //Debugging
 bool debugMQTT = false; // Debug für MQTT Discovery
@@ -35,7 +44,6 @@ WebServer server(80);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 Adafruit_SHT31 shtInnen = Adafruit_SHT31();
-DHT dht(DHTPIN, DHTTYPE);
 
 const char* configPassword = CONFIG_PASSWORD;
 
@@ -120,8 +128,13 @@ float berechneTaupunkt(float T, float RH) {
 void aktualisiereSensoren() {
   t_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_t_in : shtInnen.readTemperature();
   rh_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_rh_in : shtInnen.readHumidity();
+  #ifdef SENSOR_TYP_AUSSEN_SHT31
+  t_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_t_out : shtAussen.readTemperature();
+  rh_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_rh_out : shtAussen.readHumidity();
+  #else
   t_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_t_out : dht.readTemperature();
   rh_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_rh_out : dht.readHumidity();
+  #endif
 
   if (!isnan(t_in) && !isnan(rh_in)) td_in = berechneTaupunkt(t_in, rh_in);
   if (!isnan(t_out) && !isnan(rh_out)) td_out = berechneTaupunkt(t_out, rh_out);
@@ -1410,7 +1423,11 @@ void setupSensoren() {
   setLEDs(false, false, false);
 
   shtInnen.begin(0x44);
-  dht.begin();
+  #ifdef SENSOR_TYP_AUSSEN_SHT31
+    shtAussen.begin(0x45);  // optional: I²C-Adresse für den zweiten Sensor
+  #else
+    dht.begin();  // falls DHT22 verwendet wird
+  #endif
 }
 //setup Preferences
 void setupPreferences() {
