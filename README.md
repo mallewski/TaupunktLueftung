@@ -42,7 +42,7 @@ Nach erstmaligem flashen via USB aus ArduinoIDE, können angepasste Firmwarevari
 | Komponente                        | Beschreibung                                            | Ca. Preis (€) |
 |----------------------------------|---------------------------------------------------------|---------------|
 | **ESP32 Dev Board** (z. B. DOIT) | Mikrocontroller mit WLAN                                | 6–10 €        |
-| **SHT31 Sensor (Innen)**         | Temperatur & Luftfeuchte (hochgenau)                    | 5–8 €         |
+| **SHT31 Sensor (Innen/Außen)**         | Temperatur & Luftfeuchte (hochgenau)                    | 5–8 €         |
 | **DHT22 Sensor (Außen)**         | Temperatur & Luftfeuchte (günstiger, für Außenbereich)  | 3–5 €         |
 | **LEDs (3×)** + Vorwiderstände (220–470 Ω) | Statusanzeigen: grün, gelb, rot                         | 1–2 €         |
 | **Relais-Modul (1 Kanal)**       | Zur Ansteuerung der Lüftung                             | 2–4 €         |
@@ -85,6 +85,24 @@ Nach erstmaligem flashen via USB aus ArduinoIDE, können angepasste Firmwarevari
                        3.3 V / GND
                        
 LED's: Anode (langer Pin) → Vorwiderstand → GPIO / Kathode (kurzer Pin) → GND
+
+## Auswahl des Außensensors
+
+Dieses Projekt unterstützt zwei Sensortypen für den Außensensor:
+
+- **SHT31 (empfohlen)** – präziser, I²C-Anschluss
+- **DHT22** – günstiger, weniger genau
+
+Der SHT31 hat zwei feste I²C-Adressen:
+- 0x44 (Standard) (Innen)
+- 0x45 (wenn ADDR-Pin auf VCC statt GND liegt) (Außen)
+Damit kannst du zwei SHT31-Sensoren am gleichen I²C-Bus betreiben (gleiche SDA/SCL-Leitungen).
+
+Standard ist im Aktuellen Code SHT31. Wenn du stattdessen einen DHT22 verwenden möchtest:
+
+1. Öffne die `TaupunktLueftung.ino`
+2. Kommentiere die Zeile `#define SENSOR_TYP_AUSSEN_SHT31` aus
+3. Stelle sicher, dass der DHT22 am Pin 17 angeschlossen ist
 
 
 ### Hinweise
