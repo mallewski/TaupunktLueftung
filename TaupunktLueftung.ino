@@ -11,11 +11,12 @@
 #include <Update.h>
 #include "secrets.h"
 #include <WiFiManager.h>
-// #include "nvs_flash.h"
-
+// #include "nvs_flash.h"   // zum löschen des Flash aktivieren
+#include <ESPmDNS.h>
 
 //Parameter
 #define NAME "TaupunktLueftung"
+const char* HOSTNAME = "TaupunktLueftung";  // Gerätename für Host-Kennung
 #define FIRMWARE_VERSION "v3.0"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
@@ -1413,6 +1414,13 @@ void setupWiFi() {
   }
 
   Serial.println("WLAN verbunden: " + WiFi.localIP().toString());
+  WiFi.setHostname(HOSTNAME);
+
+  if (!MDNS.begin(HOSTNAME)) {
+    Serial.println("Fehler beim Starten von mDNS");
+  } else {
+    Serial.println("mDNS aktiv: http://" + String(HOSTNAME) + ".local");
+  }
 }
 //Setup Sensoren
 void setupSensoren() {
