@@ -189,7 +189,7 @@ void steuerlogik() {
         logEvent("Lüftung aktiviert – Befeuchtung (Regelung)");
       }
       lueftungAktiv = true;
-      setLEDs(false, false, true);
+      setLEDs(false, true, false);
       statusText = "Regelung: Befeuchten (Lüftung AN)";
     } 
     else if (rh_in > rhSoll_max && td_out < td_in - 1.0) {
@@ -210,7 +210,7 @@ void steuerlogik() {
         logEvent("Lüftung deaktiviert – RH im Zielbereich");
       }
       lueftungAktiv = false;
-      setLEDs(false, true, false);
+      setLEDs(false, false, true);
       statusText = "Regelung: RH im Zielbereich – Lüftung AUS";
     }
 
