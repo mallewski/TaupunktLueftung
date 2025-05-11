@@ -1,6 +1,3 @@
-// TaupunktLueftung v3.0
-// Vollständige Version mit Chart-Update via AJAX, MQTT-Setup, LED-Steuerung, Webinterface, WLAN-Konfig per eigenem Acesspoint, Lueftungstimer
-
 #include <Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -11,13 +8,19 @@
 #include <Update.h>
 #include "secrets.h"
 #include <WiFiManager.h>
-// #include "nvs_flash.h"   // zum löschen des Flash aktivieren
 #include <ESPmDNS.h>
+
+//Flash löschen !! löscht ALLE gespeicherten Daten im NVS (inkl. WiFi und Preferences)
+//#define DEBUG_ERASE_NVS   // aktivieren zum Löschen des Flash/NVS 
+#ifdef DEBUG_ERASE_NVS
+#include "nvs_flash.h"
+#endif
 
 //Parameter
 #define NAME "TaupunktLueftung"
-const char* HOSTNAME = "TaupunktLueftung";  // Gerätename für Host-Kennung
-#define FIRMWARE_VERSION "v3.0"
+#define DEFAULT_HOSTNAME "TaupunktLueftung"
+String hostname = DEFAULT_HOSTNAME;
+#define FIRMWARE_VERSION "v3.5"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
@@ -26,7 +29,7 @@ const char* HOSTNAME = "TaupunktLueftung";  // Gerätename für Host-Kennung
 #define SENSORZYKLUS_MS 5000
 
 //Umschaltung zwischen DHT22 (Pin17) und SHT31 für Sensor Außen
-#define SENSOR_TYP_AUSSEN_SHT31  // auskommentieren für DHT22
+//#define SENSOR_TYP_AUSSEN_SHT31  // auskommentieren für DHT22
 #ifdef SENSOR_TYP_AUSSEN_SHT31
 Adafruit_SHT31 shtAussen = Adafruit_SHT31();
 #else
@@ -39,7 +42,6 @@ DHT dht(DHTPIN, DHTTYPE);
 
 //Debugging
 bool debugMQTT = false; // Debug für MQTT Discovery
-
 Preferences prefs;
 WebServer server(80);
 WiFiClient espClient;
@@ -311,7 +313,7 @@ void publishAllStates() {
 
 void publishMQTTDiscovery() {
   if (!mqttClient.connected()) return;
-  String deviceID = NAME; // einheitlich für alle Sensoren
+  String deviceID = hostname;
 
   struct Sensor {
     String id;
@@ -427,13 +429,14 @@ void reconnectMQTT() {
   if (!mqttAktiv) return;
   while (!mqttClient.connected()) {
     Serial.print("MQTT verbinden mit: "); Serial.println(mqttServer);
-    if (mqttClient.connect(NAME, mqttUser, mqttPassword)) {
+    if (mqttClient.connect(NAME, mqttUser, mqttPassword, (mqttPublishPrefix + "availability").c_str(), 1, true, "offline" )) {
       delay(500);
       resubscribeMQTTTopics();
       Serial.println("MQTT verbunden.");
       delay(500);
       publishMQTTDiscovery();
       mqttClient.publish("homeassistant/status", "online", true);
+      mqttClient.publish((mqttPublishPrefix + "availability").c_str(), "online", true);
     } else {
       Serial.print("MQTT-Verbindung fehlgeschlagen. Code: ");
       Serial.println(mqttClient.state());
@@ -786,6 +789,7 @@ String getMainScripts() {
         ajaxFormHandler("mqttTopicsForm", "MQTT Topics gespeichert.");
         ajaxFormHandler("discoveryForm", "MQTT Discovery gesendet.");
         ajaxFormHandler("discoveryPrefixForm", "Discovery Prefix gespeichert.");
+        ajaxFormHandler("hostnameForm", "Hostname gespeichert.")
       };
 
       // ===== AJAX Hilfsfunktion =====
@@ -1175,6 +1179,15 @@ String getSettingsHtml() {
   html += "</form>";
   html += "</fieldset>";
 
+  // Hostname ändern
+  html += "<fieldset><legend>Hostname / Gerätename</legend>";
+  html += "<form id='hostnameForm' method='POST' action='/hostname'>";
+  html += "Gerätename (Hostname): <input name='hostname' value='" + hostname + "' "
+          "title='Dieser Name wird z. B. für mDNS (taupunktlueftung.local) verwendet. Achtung: Nach Änderung ist das Webinterface evtl. nur noch unter der neuen Adresse erreichbar!'><br>";
+  html += "<input type='submit' value='Hostname speichern'>";
+  html += "<p style='color:red;font-size:0.9em;'>⚠️ Nach Änderung ist das Webinterface unter dem neuen Namen erreichbar (z. B. <code>http://neuername.local</code>).</p>";
+  html += "</form></fieldset>";
+
   // Firmware-Button
   html += "<fieldset><legend>Firmware</legend>";
   html += "<p><button type='button' onclick=\"showTab('settings'); setTimeout(openFirmwareModalUI, 100);\">Firmware-Update</button></p>";
@@ -1366,6 +1379,23 @@ void handleMQTTDiscovery() {
   redirectToSettings();
 }
 
+//Hostname
+void handleHostnameUpdate() {
+  if (server.hasArg("hostname")) {
+    String newName = server.arg("hostname");
+    newName.trim();
+    if (newName.length() > 0) {
+      hostname = newName;
+      prefs.begin("config", false);
+      prefs.putString("hostname", hostname);
+      prefs.end();
+      WiFi.setHostname(hostname.c_str());  // aktiv während Laufzeit
+      logEvent("Hostname geändert auf: " + hostname);
+    }
+  }
+  server.send(200, "text/plain", "OK");
+}
+
 //Firmware
 void handleFirmwareUpload() {
   HTTPUpload& upload = server.upload();
@@ -1408,18 +1438,38 @@ void setupWiFi() {
   // Optional: Timeout nach 180 Sekunden ohne Verbindung
   wm.setTimeout(180);
 
+  prefs.begin("config", true);
+  hostname = prefs.getString("hostname", hostname);
+  prefs.end();
+
+  char hostnameBuffer[33];  // +1 für Nullterminator
+  hostname.toCharArray(hostnameBuffer, sizeof(hostnameBuffer));
+  WiFiManagerParameter custom_hostname("hostname", "Gerätename (Hostname)", hostnameBuffer, 32);
+  wm.addParameter(&custom_hostname);
+
   if (!wm.autoConnect("TaupunktLueftung-Setup")) {
     Serial.println("Kein WLAN verbunden. Starte im Offline-Modus...");
-    return;  // Fahre im Offline-Modus fort
+    return;
   }
 
-  Serial.println("WLAN verbunden: " + WiFi.localIP().toString());
-  WiFi.setHostname(HOSTNAME);
+  hostname = custom_hostname.getValue();
+  hostname.trim();
+  if (hostname.length() == 0) hostname = DEFAULT_HOSTNAME;
 
-  if (!MDNS.begin(HOSTNAME)) {
+  // Hostname setzen
+  WiFi.setHostname(hostname.c_str());
+
+  // Hostname speichern
+  prefs.begin("config", false);
+  prefs.putString("hostname", hostname);
+  prefs.end();
+
+  Serial.println("WLAN verbunden mit Hostname: " + hostname);
+
+  if (!MDNS.begin(hostname.c_str())) {
     Serial.println("Fehler beim Starten von mDNS");
   } else {
-    Serial.println("mDNS aktiv: http://" + String(HOSTNAME) + ".local");
+    Serial.println("mDNS aktiv: http://" + hostname + ".local");
   }
 }
 //Setup Sensoren
@@ -1464,6 +1514,7 @@ void setupMQTT() {
   mqttClient.setServer(mqttServer, mqttPort);
   mqttClient.setKeepAlive(60);
   mqttClient.setCallback(mqttCallback);
+  String willTopic = mqttPublishPrefix + "availability";
   if (WiFi.status() == WL_CONNECTED) {
     configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org");
     if (mqttAktiv) reconnectMQTT();
@@ -1512,6 +1563,7 @@ void setupWebServer() {
       server.send(500, "text/plain", "MQTT nicht verbunden.");
     }
   });
+  server.on("/hostname", HTTP_POST, handleHostnameUpdate);
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
     server.send(200, "text/html", R"rawliteral(
@@ -1538,9 +1590,11 @@ void setup() {
   Serial.begin(115200);
   esp_log_level_set("*", ESP_LOG_VERBOSE);
 
-  // NVS komplett löschen (WLAN + andere prefs)
-  //nvs_flash_erase();  // !! löscht ALLE gespeicherten Daten im NVS (inkl. WiFi und Preferences)
-  //nvs_flash_init();
+  #ifdef DEBUG_ERASE_NVS // Nur wenn DEBUG_ERASE_NVS aktiv ist
+    nvs_flash_erase();  // !! löscht ALLE gespeicherten Daten im NVS (inkl. WiFi und Preferences)
+    nvs_flash_init();
+    Serial.println("⚠️  NVS wurde gelöscht (DEBUG_ERASE_NVS aktiviert)");
+  #endif
 
   setupWiFi();
   setupSensoren();
