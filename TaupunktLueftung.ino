@@ -29,7 +29,7 @@ String hostname = DEFAULT_HOSTNAME;
 #define SENSORZYKLUS_MS 5000
 
 //Umschaltung zwischen DHT22 (Pin17) und SHT31 für Sensor Außen
-#define SENSOR_TYP_AUSSEN_SHT31  // auskommentieren für DHT22
+//#define SENSOR_TYP_AUSSEN_SHT31  // auskommentieren für DHT22
 #ifdef SENSOR_TYP_AUSSEN_SHT31
 Adafruit_SHT31 shtAussen = Adafruit_SHT31();
 #else
@@ -49,6 +49,10 @@ PubSubClient mqttClient(espClient);
 Adafruit_SHT31 shtInnen = Adafruit_SHT31();
 
 const char* configPassword = CONFIG_PASSWORD;
+
+bool fehlerhaft = false;
+bool sensorFehlerInnen = false;
+bool sensorFehlerAussen = false;
 
 char mqttServer[64] = "";     // leer oder z.B. "192.168.1.100"
 int mqttPort = 1883;          // Standard-MQTT-Port
@@ -113,6 +117,7 @@ void logEvent(String msg) {
 }
 
 void setLEDs(bool gruen, bool rot, bool gelb) {
+  if (fehlerhaft) return; // Fehlerzustand: LEDs werden separat gesteuert
   digitalWrite(STATUS_GREEN_PIN, gruen);
   digitalWrite(STATUS_RED_PIN, rot);
   digitalWrite(STATUS_YELLOW_PIN, gelb);
@@ -129,18 +134,98 @@ float berechneTaupunkt(float T, float RH) {
 }
 
 void aktualisiereSensoren() {
-  t_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_t_in : shtInnen.readTemperature();
-  rh_in = (modus_innen == "mqtt" && mqttAktiv) ? mqtt_rh_in : shtInnen.readHumidity();
-  #ifdef SENSOR_TYP_AUSSEN_SHT31
-  t_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_t_out : shtAussen.readTemperature();
-  rh_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_rh_out : shtAussen.readHumidity();
-  #else
-  t_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_t_out : dht.readTemperature();
-  rh_out = (modus_aussen == "mqtt" && mqttAktiv) ? mqtt_rh_out : dht.readHumidity();
-  #endif
+  // Innen
+  if (modus_innen == "mqtt" && mqttAktiv) {
+    t_in = mqtt_t_in;
+    rh_in = mqtt_rh_in;
+  } else {
+    t_in = shtInnen.readTemperature();
+    rh_in = shtInnen.readHumidity();
 
-  if (!isnan(t_in) && !isnan(rh_in)) td_in = berechneTaupunkt(t_in, rh_in);
-  if (!isnan(t_out) && !isnan(rh_out)) td_out = berechneTaupunkt(t_out, rh_out);
+    if (isnan(t_in) || isnan(rh_in)) {
+      Serial.println("SHT31 innen liefert NAN – versuche Re-Init...");
+      if (shtInnen.begin(0x44)) {
+        delay(20);
+        float temp = shtInnen.readTemperature();
+        float hum = shtInnen.readHumidity();
+        if (!isnan(temp) && !isnan(hum)) {
+          t_in = temp;
+          rh_in = hum;
+          Serial.println("SHT31 innen Re-Init erfolgreich.");
+        } else {
+          Serial.println("SHT31 innen Re-Init fehlgeschlagen (Werte weiterhin NAN).");
+        }
+      } else {
+        Serial.println("SHT31 innen Re-Init fehlgeschlagen (begin() false).");
+      }
+    }
+  }
+
+#ifdef SENSOR_TYP_AUSSEN_SHT31
+  // Außen – SHT31
+  if (modus_aussen == "mqtt" && mqttAktiv) {
+    t_out = mqtt_t_out;
+    rh_out = mqtt_rh_out;
+  } else {
+    t_out = shtAussen.readTemperature();
+    rh_out = shtAussen.readHumidity();
+
+    if (isnan(t_out) || isnan(rh_out)) {
+      Serial.println("SHT31 außen liefert NAN – versuche Re-Init...");
+      if (shtAussen.begin(0x45)) {
+        delay(20);
+        t_out = shtAussen.readTemperature();
+        rh_out = shtAussen.readHumidity();
+        Serial.println("SHT31 außen Re-Init erfolgreich.");
+      } else {
+        Serial.println("SHT31 außen Re-Init fehlgeschlagen.");
+      }
+    }
+  }
+#else
+  // Außen – DHT22
+  if (modus_aussen == "mqtt" && mqttAktiv) {
+    t_out = mqtt_t_out;
+    rh_out = mqtt_rh_out;
+  } else {
+    t_out = dht.readTemperature();
+    rh_out = dht.readHumidity();
+
+    if (isnan(t_out) || isnan(rh_out)) {
+      Serial.println("DHT22 liefert NAN – versuche Re-Init...");
+      dht.begin();
+      delay(100);
+      float temp = dht.readTemperature();
+      float hum = dht.readHumidity();
+      if (!isnan(temp) && !isnan(hum)) {
+        t_out = temp;
+        rh_out = hum;
+        Serial.println("DHT22 Re-Init erfolgreich.");
+      } else {
+        Serial.println("DHT22 Re-Init fehlgeschlagen (Werte weiterhin NAN).");
+      }
+    }
+  }
+#endif
+
+  // Fehlerstatus getrennt prüfen
+  sensorFehlerInnen = isnan(t_in) || isnan(rh_in);
+  sensorFehlerAussen = isnan(t_out) || isnan(rh_out);
+  fehlerhaft = sensorFehlerInnen || sensorFehlerAussen;
+
+  if (sensorFehlerInnen) {
+    td_in = NAN;
+    Serial.println("Sensorfehler INNEN erkannt!");
+  } else {
+    td_in = berechneTaupunkt(t_in, rh_in);
+  }
+
+  if (sensorFehlerAussen) {
+    td_out = NAN;
+    Serial.println("Sensorfehler AUSSEN erkannt!");
+  } else {
+    td_out = berechneTaupunkt(t_out, rh_out);
+  }
 
   publishAllStates();
 }
@@ -309,6 +394,12 @@ void publishAllStates() {
 
   // Availability (optional bei reconnect)
   mqttClient.publish((mqttPublishPrefix + "availability").c_str(), "online", true);
+
+  //Sensorfehler
+  mqttClient.publish((mqttPublishPrefix + "fehler").c_str(), fehlerhaft ? "1" : "0", true);
+  mqttClient.publish((mqttPublishPrefix + "fehler_innen").c_str(), sensorFehlerInnen ? "1" : "0", true);
+  mqttClient.publish((mqttPublishPrefix + "fehler_aussen").c_str(), sensorFehlerAussen ? "1" : "0", true);
+
 }
 
 void publishMQTTDiscovery() {
@@ -335,7 +426,12 @@ void publishMQTTDiscovery() {
 
     {"diff", "Taupunkt-Differenz", "°C", "temperature", mqttPublishPrefix + "diff", false},
     
-    {"lueftung", "Lüftung aktiv", "", "", mqttPublishPrefix + "status", true}
+    {"lueftung", "Lüftung aktiv", "", "", mqttPublishPrefix + "status", true},
+
+    {"fehler", "Sensorfehler", "", "", mqttPublishPrefix + "fehler", true},
+    {"fehler_innen", "Sensorfehler Innen", "", "", mqttPublishPrefix + "fehler_innen", true},
+    {"fehler_aussen", "Sensorfehler Außen", "", "", mqttPublishPrefix + "fehler_aussen", true}
+
   };
 
   for (Sensor s : sensoren) {
@@ -492,16 +588,20 @@ void handleLiveData() {
     timerInfo = String(buffer) + " min Mindestlaufzeit";
   }
 
+  auto f1 = [](float val) {
+    return isnan(val) || isinf(val) ? "null" : String(val, 1);
+  };
+
   String json = "{";
-  json += "\"t_in\":" + String(t_in, 1) + ",";
-  json += "\"rh_in\":" + String(rh_in, 1) + ",";
-  json += "\"t_out\":" + String(t_out, 1) + ",";
-  json += "\"rh_out\":" + String(rh_out, 1) + ",";
-  json += "\"td_in\":" + String(td_in, 1) + ",";
-  json += "\"td_out\":" + String(td_out, 1) + ",";
+  json += "\"t_in\":" + f1(t_in) + ",";
+  json += "\"rh_in\":" + f1(rh_in) + ",";
+  json += "\"t_out\":" + f1(t_out) + ",";
+  json += "\"rh_out\":" + f1(rh_out) + ",";
+  json += "\"td_in\":" + f1(td_in) + ",";
+  json += "\"td_out\":" + f1(td_out) + ",";
   json += "\"zeit\":\"" + sichereUhrzeit + "\",";
-  json += "\"status\":\"" + sichererStatus + "\"";
-  json += ",\"timer\":\"" + timerInfo + "\"";
+  json += "\"status\":\"" + sichererStatus + "\",";
+  json += "\"timer\":\"" + timerInfo + "\"";
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -657,7 +757,7 @@ String getMainScripts() {
           el.style.color = "";
           el.title = "";
         } else {
-          el.textContent = "⚠️";
+          el.textContent = "NaN";
           el.style.color = "red";
           el.title = "Sensorwert ungültig oder nicht verfügbar";
         }
@@ -1644,6 +1744,25 @@ void handleSensorzyklus() {
 void loop() {
   if (updateModeActive) {
     server.handleClient();
+    return;
+  }
+
+  static unsigned long lastBlink = 0;
+  static bool ledState = false;
+
+  if (fehlerhaft) {
+    // blinke rote LED
+    if (millis() - lastBlink > 500) {
+      lastBlink = millis();
+      ledState = !ledState;
+      digitalWrite(STATUS_GREEN_PIN, LOW);
+      digitalWrite(STATUS_YELLOW_PIN, LOW);
+      digitalWrite(STATUS_RED_PIN, ledState);
+    }
+
+    // Trotzdem Webserver + Sensor checken!
+    handleWebServer();
+    handleSensorzyklus();
     return;
   }
 
