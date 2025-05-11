@@ -29,7 +29,7 @@ String hostname = DEFAULT_HOSTNAME;
 #define SENSORZYKLUS_MS 5000
 
 //Umschaltung zwischen DHT22 (Pin17) und SHT31 für Sensor Außen
-//#define SENSOR_TYP_AUSSEN_SHT31  // auskommentieren für DHT22
+#define SENSOR_TYP_AUSSEN_SHT31  // auskommentieren für DHT22
 #ifdef SENSOR_TYP_AUSSEN_SHT31
 Adafruit_SHT31 shtAussen = Adafruit_SHT31();
 #else
