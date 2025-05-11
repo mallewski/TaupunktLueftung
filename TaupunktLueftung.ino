@@ -789,7 +789,6 @@ String getMainScripts() {
         ajaxFormHandler("mqttTopicsForm", "MQTT Topics gespeichert.");
         ajaxFormHandler("discoveryForm", "MQTT Discovery gesendet.");
         ajaxFormHandler("discoveryPrefixForm", "Discovery Prefix gespeichert.");
-        ajaxFormHandler("hostnameForm", "Hostname gespeichert.")
       };
 
       // ===== AJAX Hilfsfunktion =====
@@ -1390,6 +1389,8 @@ void handleHostnameUpdate() {
       prefs.putString("hostname", hostname);
       prefs.end();
       WiFi.setHostname(hostname.c_str());
+      MDNS.end();  // Beende bisherigen mDNS-Dienst
+      MDNS.begin(hostname.c_str());  // Starte mDNS mit dem neuen Namen
       logEvent("Hostname geändert auf: " + hostname);
     }
   }
@@ -1399,19 +1400,15 @@ void handleHostnameUpdate() {
 
   String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
   html += "<meta http-equiv='refresh' content='15;url=http://" + newHost + ".local'>";
-  html += "<title>Neustart…</title></head><body>";
+  html += "<title>Hostname geändert</title></head><body>";
   html += "<h3>Hostname gespeichert: <code>" + newHost + "</code></h3>";
-  html += "<p>Das Gerät startet nun neu. Dies kann einige Sekunden dauern.</p>";
-  html += "<p>Du wirst automatisch weitergeleitet auf: <a href='http://" + newHost + ".local'>http://" + newHost + ".local</a></p>";
-  html += "<p>Alternativ kannst du es auch per IP erreichen: <code>http://" + ip + "</code></p>";
+  html += "<p>Das Webinterface sollte bald unter <a href='http://" + newHost + ".local'>http://" + newHost + ".local</a> erreichbar sein.</p>";
+  html += "<p>Alternativ erreichst du es per IP: <code>http://" + ip + "</code></p>";
+  html += "<p>Kein Neustart nötig – Änderung wird beim nächsten WLAN-Connect aktiv.</p>";
   html += "</body></html>";
 
   server.send(200, "text/html", html);
-  delay(1000);  // Zeit geben, um Antwort zu senden
-  ESP.restart();
 }
-
-
 
 //Firmware
 void handleFirmwareUpload() {
