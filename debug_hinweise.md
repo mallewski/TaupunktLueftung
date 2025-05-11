@@ -51,5 +51,6 @@ Wenn du die Firmware neu aufsetzt oder Probleme mit alten Einstellungen hast, ka
     ```cpp
     //#define DEBUG_ERASE_NVS
     ```
+    Danach das Sketch nocheinmal erneut auf das Gerät hochladen.
 
 ⚠️ **Achtung:** Dieser Vorgang ist irreversibel – alle gespeicherten Daten gehen verloren.
