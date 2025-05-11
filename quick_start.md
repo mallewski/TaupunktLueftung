@@ -116,7 +116,7 @@ Alternativ: MQTT-gesteuerte Steckdose zur Lüftersteuerung (s. README)
 
 **9. Fertig!**
 
-Webinterface aufrufen: Wenn bei der Konfiguration des WLAN der Gerätename nich geändert wurde: "http://TaupunktLueftung.local" ansonsten "http://[neuer_Gerätename].local
+Webinterface aufrufen: Wenn bei der Konfiguration des WLAN der Gerätename nicht geändert wurde: "http://TaupunktLueftung.local" ansonsten "http://[neuer_Gerätename].local
 
 Einstellungen wie MQTT, Sensorquellen, Temperaturschutz etc. im Webinterface anpassen
 
