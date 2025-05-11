@@ -116,7 +116,7 @@ Alternativ: MQTT-gesteuerte Steckdose zur Lüftersteuerung (s. README)
 
 **9. Fertig!**
 
-Webinterface aufrufen: http://[IP-Adresse deines ESP32] (IP-Adresse wird im seriellen Monitor ausgegeben. Alternativ im Router nachschauen)
+Webinterface aufrufen: Wenn bei der Konfiguration des WLAN der Gerätename nich geändert wurde: "http://TaupunktLueftung.local" ansonsten "http://[neuer_Gerätename].local
 
 Einstellungen wie MQTT, Sensorquellen, Temperaturschutz etc. im Webinterface anpassen
 

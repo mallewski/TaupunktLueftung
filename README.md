@@ -86,7 +86,7 @@ Nach erstmaligem flashen via USB aus ArduinoIDE, können angepasste Firmwarevari
                        
 LED's: Anode (langer Pin) → Vorwiderstand → GPIO / Kathode (kurzer Pin) → GND
 
-## Auswahl des Außensensors
+### Auswahl des Außensensors
 
 Dieses Projekt unterstützt zwei Sensortypen für den Außensensor:
 
