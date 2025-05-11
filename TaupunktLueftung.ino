@@ -1180,12 +1180,12 @@ String getSettingsHtml() {
   html += "</fieldset>";
 
   // Hostname ändern
-  html += "<fieldset><legend>Hostname / Gerätename</legend>";
+  html += "<fieldset><legend>Hostname</legend>";
   html += "<form id='hostnameForm' method='POST' action='/hostname'>";
-  html += "Gerätename (Hostname): <input name='hostname' value='" + hostname + "' "
-          "title='Dieser Name wird z. B. für mDNS (taupunktlueftung.local) verwendet. Achtung: Nach Änderung ist das Webinterface evtl. nur noch unter der neuen Adresse erreichbar!'><br>";
+  html += "Gerätename im Netzwerk (Hostname): <input name='hostname' value='" + hostname + "' "
+          "title='Dieser Name wird z. B. für mDNS (taupunktlueftung.local) verwendet. Achtung: Nach Änderung ist das Webinterface evtl. nur noch unter der neuen Adresse (oder über die IP-Adresse) erreichbar!' style='display:inline-block; width:auto;'><span style='margin-left:8px; color:gray;'>IP: " + WiFi.localIP().toString() + "</span><br>";
+  html += "<p style='font-size:0.9em;'>⚠️ Nach Änderung ist das Webinterface unter dem neuen Namen erreichbar (z. B. <code>http://neuername.local</code>).</p>";
   html += "<input type='submit' value='Hostname speichern'>";
-  html += "<p style='color:red;font-size:0.9em;'>⚠️ Nach Änderung ist das Webinterface unter dem neuen Namen erreichbar (z. B. <code>http://neuername.local</code>).</p>";
   html += "</form></fieldset>";
 
   // Firmware-Button
@@ -1389,12 +1389,29 @@ void handleHostnameUpdate() {
       prefs.begin("config", false);
       prefs.putString("hostname", hostname);
       prefs.end();
-      WiFi.setHostname(hostname.c_str());  // aktiv während Laufzeit
+      WiFi.setHostname(hostname.c_str());
       logEvent("Hostname geändert auf: " + hostname);
     }
   }
-  server.send(200, "text/plain", "OK");
+
+  String newHost = hostname;
+  String ip = WiFi.localIP().toString();
+
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
+  html += "<meta http-equiv='refresh' content='15;url=http://" + newHost + ".local'>";
+  html += "<title>Neustart…</title></head><body>";
+  html += "<h3>Hostname gespeichert: <code>" + newHost + "</code></h3>";
+  html += "<p>Das Gerät startet nun neu. Dies kann einige Sekunden dauern.</p>";
+  html += "<p>Du wirst automatisch weitergeleitet auf: <a href='http://" + newHost + ".local'>http://" + newHost + ".local</a></p>";
+  html += "<p>Alternativ kannst du es auch per IP erreichen: <code>http://" + ip + "</code></p>";
+  html += "</body></html>";
+
+  server.send(200, "text/html", html);
+  delay(1000);  // Zeit geben, um Antwort zu senden
+  ESP.restart();
 }
+
+
 
 //Firmware
 void handleFirmwareUpload() {
