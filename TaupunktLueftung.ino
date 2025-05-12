@@ -9,6 +9,7 @@
 #include "secrets.h"
 #include <WiFiManager.h>
 #include <ESPmDNS.h>
+#include <esp_netif.h> 
 
 //Flash löschen !! löscht ALLE gespeicherten Daten im NVS (inkl. WiFi und Preferences)
 //#define DEBUG_ERASE_NVS   // aktivieren zum Löschen des Flash/NVS 
@@ -1544,48 +1545,50 @@ void prepareForFirmwareUpdate() {
 // --- Setup --->
 //Setup Wifi - WLAN-Verbindung herstellen (via Access Point falls keine bekannt)
 void setupWiFi() {
-  WiFi.mode(WIFI_STA);  // Nur Station-Modus
-  WiFiManager wm;
-
-  wm.setDebugOutput(false);
-
-  // Optional: Timeout nach 180 Sekunden ohne Verbindung
-  wm.setTimeout(180);
-
   prefs.begin("config", true);
-  hostname = prefs.getString("hostname", hostname);
+  hostname = prefs.getString("hostname", DEFAULT_HOSTNAME);
   prefs.end();
+  if (hostname.isEmpty()) hostname = DEFAULT_HOSTNAME;
 
-  char hostnameBuffer[33];  // +1 für Nullterminator
-  hostname.toCharArray(hostnameBuffer, sizeof(hostnameBuffer));
-  WiFiManagerParameter custom_hostname("hostname", "Gerätename (Hostname)", hostnameBuffer, 32);
-  wm.addParameter(&custom_hostname);
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(hostname.c_str());
+  
+  esp_netif_t* sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  if (sta_netif) {
+    esp_netif_set_hostname(sta_netif, hostname.c_str());
+  }
+
+  WiFiManager wm;
+  wm.setDebugOutput(false);
+  wm.setTimeout(180);
+  char hb[33];
+  strncpy(hb, hostname.c_str(), sizeof(hb));
+  WiFiManagerParameter custom_hn("hn", "Hostname", hb, 32);
+  wm.addParameter(&custom_hn);
 
   if (!wm.autoConnect("TaupunktLueftung-Setup")) {
-    Serial.println("Kein WLAN verbunden. Starte im Offline-Modus...");
+    Serial.println("Kein WLAN – Offline-Modus");
     return;
   }
 
-  hostname = custom_hostname.getValue();
+  hostname = custom_hn.getValue();
   hostname.trim();
-  if (hostname.length() == 0) hostname = DEFAULT_HOSTNAME;
-
-  // Hostname setzen
-  WiFi.setHostname(hostname.c_str());
-
-  // Hostname speichern
+  if (hostname.isEmpty()) hostname = DEFAULT_HOSTNAME;
   prefs.begin("config", false);
   prefs.putString("hostname", hostname);
   prefs.end();
 
-  Serial.println("WLAN verbunden mit Hostname: " + hostname);
+  if (sta_netif) {
+    esp_netif_set_hostname(sta_netif, hostname.c_str());
+  }
 
   if (!MDNS.begin(hostname.c_str())) {
-    Serial.println("Fehler beim Starten von mDNS");
+    Serial.println("mDNS start failed");
   } else {
-    Serial.println("mDNS aktiv: http://" + hostname + ".local");
+    Serial.printf("mDNS: http://%s.local\n", hostname.c_str());
   }
 }
+
 //Setup Sensoren
 void setupSensoren() {
   pinMode(RELAY_LED_PIN, OUTPUT);
