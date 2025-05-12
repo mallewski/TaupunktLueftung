@@ -51,7 +51,6 @@ Adafruit_SHT31 shtInnen = Adafruit_SHT31();
 
 const char* configPassword = CONFIG_PASSWORD;
 
-bool fehlerhaft = false;
 bool sensorFehlerInnen = false;
 bool sensorFehlerAussen = false;
 
@@ -118,7 +117,7 @@ void logEvent(String msg) {
 }
 
 void setLEDs(bool gruen, bool rot, bool gelb) {
-  if (fehlerhaft) return; // Fehlerzustand: LEDs werden separat gesteuert
+  if (sensorFehlerInnen || sensorFehlerAussen) return; // Fehlerzustand: LEDs werden separat gesteuert
   digitalWrite(STATUS_GREEN_PIN, gruen);
   digitalWrite(STATUS_RED_PIN, rot);
   digitalWrite(STATUS_YELLOW_PIN, gelb);
@@ -212,7 +211,6 @@ void aktualisiereSensoren() {
   // Fehlerstatus getrennt prüfen
   sensorFehlerInnen = isnan(t_in) || isnan(rh_in);
   sensorFehlerAussen = isnan(t_out) || isnan(rh_out);
-  fehlerhaft = sensorFehlerInnen || sensorFehlerAussen;
 
   if (sensorFehlerInnen) {
     td_in = NAN;
@@ -397,7 +395,6 @@ void publishAllStates() {
   mqttClient.publish((mqttPublishPrefix + "availability").c_str(), "online", true);
 
   //Sensorfehler
-  mqttClient.publish((mqttPublishPrefix + "fehler").c_str(), fehlerhaft ? "1" : "0", true);
   mqttClient.publish((mqttPublishPrefix + "fehler_innen").c_str(), sensorFehlerInnen ? "1" : "0", true);
   mqttClient.publish((mqttPublishPrefix + "fehler_aussen").c_str(), sensorFehlerAussen ? "1" : "0", true);
 
@@ -429,7 +426,6 @@ void publishMQTTDiscovery() {
     
     {"lueftung", "Lüftung aktiv", "", "", mqttPublishPrefix + "status", true},
 
-    {"fehler", "Sensorfehler", "", "", mqttPublishPrefix + "fehler", true},
     {"fehler_innen", "Sensorfehler Innen", "", "", mqttPublishPrefix + "fehler_innen", true},
     {"fehler_aussen", "Sensorfehler Außen", "", "", mqttPublishPrefix + "fehler_aussen", true}
 
@@ -1753,7 +1749,7 @@ void loop() {
   static unsigned long lastBlink = 0;
   static bool ledState = false;
 
-  if (fehlerhaft) {
+  if (sensorFehlerInnen || sensorFehlerAussen) {
     // blinke rote LED
     if (millis() - lastBlink > 500) {
       lastBlink = millis();
