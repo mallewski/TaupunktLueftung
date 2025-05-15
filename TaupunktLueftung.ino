@@ -17,6 +17,9 @@
 #include "nvs_flash.h"
 #endif
 
+//Debugging
+bool debugMQTT = false; // Debug für MQTT Discovery
+
 //Parameter
 #define NAME "TaupunktLueftung"
 #define DEFAULT_HOSTNAME "TaupunktLueftung"
@@ -40,9 +43,6 @@ Adafruit_SHT31 shtAussen = Adafruit_SHT31();
 DHT dht(DHTPIN, DHTTYPE);
 #endif
 
-
-//Debugging
-bool debugMQTT = false; // Debug für MQTT Discovery
 Preferences prefs;
 WebServer server(80);
 WiFiClient espClient;
@@ -1769,5 +1769,3 @@ void loop() {
   handleWebServer();
   handleSensorzyklus();
 }
-
-
