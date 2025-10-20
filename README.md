@@ -115,6 +115,10 @@ Standard ist im Aktuellen Code SHT31. Wenn du stattdessen einen DHT22 verwenden 
   sind direkt über das Browser-Interface konfigurierbar.
 - **Außensensor (DHT22) wettergeschützt montieren**, z. B. unter einem Vordach oder in einem geeigneten Gehäuse.
 
+<img src="docs/1747229085390.jpg" alt="Beispielaufbau_1" width="400">  
+<img src="docs/1747229085406.jpg" alt="Beispielaufbau_2" width="400">  
+<img src="docs/Sensor_Innen.jpg" alt="Beispielaufbau_Sensor_innen" width="400">  
+
 ### **Lüfterempfehlung**
 
 Für eine effektive Kellerlüftung sind leistungsstarke Ventilatoren erforderlich. Normale PC-Lüfter reichen in der Regel nicht aus.
