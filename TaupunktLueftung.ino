@@ -854,15 +854,18 @@ String getMainScripts() {
 
 	     function rebootDevice() {
         if (!confirm("Gerät wirklich neu starten? Die Verbindung geht kurz verloren.")) return;
-        fetch("/reboot", { method: "POST" })
-          .then(() => {
-            alert("Neustart läuft. Seite wird in 10 Sekunden neu geladen.");
-            setTimeout(() => { location.reload(); }, 10000);
-          })
-          .catch(() => {
-            alert("Neustart ausgelöst (Verbindung ggf. kurz unterbrochen).");
-            setTimeout(() => { location.reload(); }, 10000);
-          });
+        fetch("/reboot", { method: "POST" }).catch(() => {}); // Antwort evtl. gar nicht mehr sauber ankommend
+        document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
+          "<h3>Neustart läuft…</h3><p>Seite lädt automatisch neu, sobald das Gerät wieder erreichbar ist.</p></div>";
+        waitForReboot();
+      }
+
+      function waitForReboot() {
+        setTimeout(() => {
+          fetch("/livedata")
+            .then(() => location.reload())   // Gerät antwortet wieder -> reload
+            .catch(() => waitForReboot());   // noch nicht da -> weiter warten
+        }, 2000);
       }
 
       function outsideClickModal(e) {
