@@ -614,6 +614,13 @@ void redirectToSettings() {
   )rawliteral");
 }
 
+void handleReboot() {
+  server.send(200, "text/plain", "Neustart wird durchgeführt...");
+  logEvent("Neustart über Weboberfläche ausgelöst");
+  delay(500);          // Zeit für die Antwort, damit der Browser sie noch bekommt
+  ESP.restart();
+}
+
 // --- Dashboard --->
 //JS-Script
 String getMainScripts() {
@@ -843,6 +850,19 @@ String getMainScripts() {
 
       function escCloseModal(e) {
         if (e.key === "Escape") closeFirmwareModal();
+      }
+
+	     function rebootDevice() {
+        if (!confirm("Gerät wirklich neu starten? Die Verbindung geht kurz verloren.")) return;
+        fetch("/reboot", { method: "POST" })
+          .then(() => {
+            alert("Neustart läuft. Seite wird in 10 Sekunden neu geladen.");
+            setTimeout(() => { location.reload(); }, 10000);
+          })
+          .catch(() => {
+            alert("Neustart ausgelöst (Verbindung ggf. kurz unterbrochen).");
+            setTimeout(() => { location.reload(); }, 10000);
+          });
       }
 
       function outsideClickModal(e) {
@@ -1289,6 +1309,11 @@ String getSettingsHtml() {
   html += "<p><button type='button' onclick=\"showTab('settings'); setTimeout(openFirmwareModalUI, 100);\">Firmware-Update</button></p>";
   html += "</fieldset>";
 
+  // Neustart-Button
+  html += "<fieldset><legend>Gerät</legend>";
+  html += "<p><button type='button' style='background-color:#c0392b;color:white;' onclick='rebootDevice()'>Gerät neu starten</button></p>";
+  html += "</fieldset>";
+
   html += "<p align='center'>";
   html += "<a href='https://github.com/mallewski/TaupunktLueftung' target='_blank' "
         "style='display:inline-block;text-decoration:none;padding:6px 12px;"
@@ -1538,6 +1563,13 @@ void prepareForFirmwareUpdate() {
   logEvent("Firmware-Update vorbereitet. Dienste deaktiviert.");
 }
 
+void handleReboot() {
+  server.send(200, "text/plain", "Neustart wird durchgeführt...");
+  logEvent("Neustart über Weboberfläche ausgelöst");
+  delay(500);
+  ESP.restart();
+}
+
 // --- Setup --->
 //Setup Wifi - WLAN-Verbindung herstellen (via Access Point falls keine bekannt)
 void setupWiFi() {
@@ -1647,6 +1679,7 @@ void setupWebServer() {
   server.on("/mqtttopics", HTTP_POST, handleMQTTTopics);
   server.on("/setMQTT", handleSetMQTT);
   server.on("/setModus", handleSetModus);
+  server.on("/reboot", HTTP_POST, handleReboot);
   server.on("/chartdata", handleChartData);
   server.on("/livedata", handleLiveData);
   server.on("/style.css", handleCSS);
