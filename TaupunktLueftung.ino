@@ -32,6 +32,10 @@ String hostname = DEFAULT_HOSTNAME;
 #define MAX_POINTS 720
 #define SENSORZYKLUS_MS 5000
 
+//Frimware-Update
+bool firmwareUpdateSuccess = false;
+bool mqttAktivVorUpdate = false;
+
 //Umschaltung zwischen DHT22 (Pin17) und SHT31 für Sensor Außen
 //#define SENSOR_TYP_AUSSEN_SHT31  // auskommentieren für DHT22
 #ifdef SENSOR_TYP_AUSSEN_SHT31
@@ -1314,7 +1318,7 @@ String getSettingsHtml() {
 
   // Neustart-Button
   html += "<fieldset><legend>Gerät</legend>";
-  html += "<p><button type='button' style='background-color:#c0392b;color:white;' onclick='rebootDevice()'>Gerät neu starten</button></p>";
+  html += "<p><button type='button' onclick='rebootDevice()'>Gerät neu starten</button></p>";
   html += "</fieldset>";
 
   html += "<p align='center'>";
@@ -1540,8 +1544,8 @@ void handleFirmwareUpload() {
   HTTPUpload& upload = server.upload();
 
   if (upload.status == UPLOAD_FILE_START) {
-    prepareForFirmwareUpdate(); // <<< Hier aktivieren wir den Stop-Modus
-
+    prepareForFirmwareUpdate();
+    firmwareUpdateSuccess = false;
     Serial.printf("Update: %s\n", upload.filename.c_str());
     if (!Update.begin()) {
       Update.printError(Serial);
@@ -1553,16 +1557,19 @@ void handleFirmwareUpload() {
   } else if (upload.status == UPLOAD_FILE_END) {
     if (Update.end(true)) {
       Serial.printf("Update abgeschlossen: %u Bytes\n", upload.totalSize);
+      firmwareUpdateSuccess = true;
     } else {
       Update.printError(Serial);
+      firmwareUpdateSuccess = false;
     }
   }
 }
+
 void prepareForFirmwareUpdate() {
-  mqttClient.disconnect();         // MQTT sicher trennen
+  mqttAktivVorUpdate = mqttAktiv;   // Zustand merken für möglichen Rollback
+  mqttClient.disconnect();
   mqttAktiv = false;
-  // Optionale Flags:
-  updateModeActive = true;        // Setze in der loop() oder beim Lesen Checks wie: if (updateModeActive) return;
+  updateModeActive = true;
   logEvent("Firmware-Update vorbereitet. Dienste deaktiviert.");
 }
 
@@ -1707,7 +1714,9 @@ void setupWebServer() {
   });
   server.on("/hostname", HTTP_POST, handleHostnameUpdate);
   server.on("/update", HTTP_POST, []() {
-    server.sendHeader("Connection", "close");
+  server.sendHeader("Connection", "close");
+
+  if (firmwareUpdateSuccess) {
     server.send(200, "text/html", R"rawliteral(
       <html><head><meta charset='UTF-8'><title>Update</title><style>
         body { font-family: sans-serif; background: #f8f9fa; text-align: center; padding: 50px; }
@@ -1721,7 +1730,28 @@ void setupWebServer() {
     )rawliteral");
     delay(1000);
     ESP.restart();
-  }, handleFirmwareUpload);
+  } else {
+    // Rollback: Update-Modus verlassen, Dienste wiederherstellen
+    updateModeActive = false;
+    mqttAktiv = mqttAktivVorUpdate;
+    if (mqttAktiv) {
+      reconnectMQTT();
+    }
+    logEvent("Firmware-Update fehlgeschlagen. Dienste wiederhergestellt.");
+
+    server.send(200, "text/html", R"rawliteral(
+      <html><head><meta charset='UTF-8'><title>Update fehlgeschlagen</title><style>
+        body { font-family: sans-serif; background: #f8f9fa; text-align: center; padding: 50px; }
+        .status { font-size: 1.5em; color: #c0392b; }
+      </style></head><body>
+      <p class='status'>Firmware-Update fehlgeschlagen.<br>Das Gerät läuft weiter mit der alten Firmware.</p>
+      <p>Prüfe die Serial-Konsole für Details, oder versuche es erneut.</p>
+      <a href='/'>Zurück zum Interface</a>
+      </body></html>
+    )rawliteral");
+    // Kein Neustart nötig – alte Firmware läuft normal weiter.
+  }
+}, handleFirmwareUpload);
 
   server.begin();
   Serial.println("[OK] Webserver gestartet.");
