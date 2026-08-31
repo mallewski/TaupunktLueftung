@@ -10,6 +10,10 @@
 #include <WiFiManager.h>
 #include <ESPmDNS.h>
 #include <esp_netif.h> 
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
+
+struct Akkumulator; 
 
 //Flash löschen !! löscht ALLE gespeicherten Daten im NVS (inkl. WiFi und Preferences)
 //#define DEBUG_ERASE_NVS   // aktivieren zum Löschen des Flash/NVS 
@@ -24,12 +28,11 @@ bool debugMQTT = false; // Debug für MQTT Discovery
 #define NAME "TaupunktLueftung"
 #define DEFAULT_HOSTNAME "TaupunktLueftung"
 String hostname = DEFAULT_HOSTNAME;
-#define FIRMWARE_VERSION "v3.6"
+#define FIRMWARE_VERSION "v3.7"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
 #define STATUS_YELLOW_PIN 19
-#define MAX_POINTS 720
 #define SENSORZYKLUS_MS 5000
 
 //Frimware-Update
@@ -93,13 +96,52 @@ float t_out = NAN, rh_out = NAN, td_out = NAN;
 float mqtt_t_in = NAN, mqtt_rh_in = NAN;
 float mqtt_t_out = NAN, mqtt_rh_out = NAN;
 
-float td_in_history[MAX_POINTS];
-float td_out_history[MAX_POINTS];
-float td_diff_history[MAX_POINTS];
-float rh_in_history[MAX_POINTS];
-float rh_out_history[MAX_POINTS];
-bool status_history[MAX_POINTS]; 
-int history_index = 0;
+#define HIST_NULL INT16_MIN
+
+int16_t toI16(float v) {
+  if (isnan(v) || isinf(v)) return HIST_NULL;
+  return (int16_t) round(v * 10.0);
+}
+
+// ===== Tier 1: 5s-Auflösung, 1 Stunde =====
+#define TIER1_POINTS 720
+int16_t t1_td_in[TIER1_POINTS], t1_td_out[TIER1_POINTS], t1_diff[TIER1_POINTS];
+int16_t t1_rh_in[TIER1_POINTS], t1_rh_out[TIER1_POINTS];
+bool    t1_status[TIER1_POINTS];
+int     t1_index = 0;
+
+// ===== Tier 2: 1min-Auflösung, 24 Stunden =====
+#define TIER2_POINTS 1440
+#define TIER2_INTERVAL_MS 60000UL
+int16_t t2_td_in[TIER2_POINTS], t2_td_out[TIER2_POINTS];
+int16_t t2_diff_avg[TIER2_POINTS], t2_diff_min[TIER2_POINTS];
+int16_t t2_rh_in_avg[TIER2_POINTS], t2_rh_in_min[TIER2_POINTS];
+int16_t t2_rh_out[TIER2_POINTS];
+bool    t2_status[TIER2_POINTS];
+int     t2_index = 0;
+unsigned long t2_letzterEintrag = 0;
+
+// ===== Tier 3: 1h-Auflösung, 30 Tage =====
+#define TIER3_POINTS 720
+#define TIER3_INTERVAL_MS 3600000UL
+int16_t t3_td_in[TIER3_POINTS], t3_td_out[TIER3_POINTS];
+int16_t t3_diff_avg[TIER3_POINTS], t3_diff_min[TIER3_POINTS];
+int16_t t3_rh_in_avg[TIER3_POINTS], t3_rh_in_min[TIER3_POINTS];
+int16_t t3_rh_out[TIER3_POINTS];
+bool    t3_status[TIER3_POINTS];
+int     t3_index = 0;
+unsigned long t3_letzterEintrag = 0;
+
+// ===== Akkumulatoren (bleiben float, für präzise Summierung) =====
+struct Akkumulator {
+  float summe_td_in = 0, summe_td_out = 0, summe_diff = 0;
+  float min_diff = 999;
+  float summe_rh_in = 0, min_rh_in = 999, summe_rh_out = 0;
+  int anzahl = 0;
+  bool warAktiv = false;
+};
+Akkumulator akkuTier2;
+Akkumulator akkuTier3;
 
 String statusText = "Unbekannt";
 bool lueftungAktiv = false;
@@ -135,6 +177,72 @@ float berechneTaupunkt(float T, float RH) {
   float dd = sdd * RH / 100.0;
   float v = log10(dd / 6.1078);
   return (b * v) / (a - v);
+}
+
+void akkumuliere(Akkumulator &a, float ti, float to, float diff, float ri, float ro, bool aktiv) {
+  a.summe_td_in += ti;
+  a.summe_td_out += to;
+  a.summe_diff += diff;
+  a.min_diff = min(a.min_diff, diff);
+  a.summe_rh_in += ri;
+  a.min_rh_in = min(a.min_rh_in, ri);
+  a.summe_rh_out += ro;
+  a.anzahl++;
+  if (aktiv) a.warAktiv = true;
+}
+
+void historieAktualisieren() {
+  float diff = td_in - td_out;
+  unsigned long jetzt = millis();
+
+  t1_td_in[t1_index] = toI16(td_in);
+  t1_td_out[t1_index] = toI16(td_out);
+  t1_diff[t1_index] = toI16(diff);
+  t1_rh_in[t1_index] = toI16(rh_in);
+  t1_rh_out[t1_index] = toI16(rh_out);
+  t1_status[t1_index] = lueftungAktiv;
+  t1_index = (t1_index + 1) % TIER1_POINTS;
+
+  akkumuliere(akkuTier2, td_in, td_out, diff, rh_in, rh_out, lueftungAktiv);
+
+  if (jetzt - t2_letzterEintrag >= TIER2_INTERVAL_MS && akkuTier2.anzahl > 0) {
+    t2_letzterEintrag = jetzt;
+    float avg_ti = akkuTier2.summe_td_in / akkuTier2.anzahl;
+    float avg_to = akkuTier2.summe_td_out / akkuTier2.anzahl;
+    float avg_diff = akkuTier2.summe_diff / akkuTier2.anzahl;
+    float avg_ri = akkuTier2.summe_rh_in / akkuTier2.anzahl;
+    float avg_ro = akkuTier2.summe_rh_out / akkuTier2.anzahl;
+
+    t2_td_in[t2_index] = toI16(avg_ti);
+    t2_td_out[t2_index] = toI16(avg_to);
+    t2_diff_avg[t2_index] = toI16(avg_diff);
+    t2_diff_min[t2_index] = toI16(akkuTier2.min_diff);
+    t2_rh_in_avg[t2_index] = toI16(avg_ri);
+    t2_rh_in_min[t2_index] = toI16(akkuTier2.min_rh_in);
+    t2_rh_out[t2_index] = toI16(avg_ro);
+    t2_status[t2_index] = akkuTier2.warAktiv;
+    t2_index = (t2_index + 1) % TIER2_POINTS;
+
+    akkumuliere(akkuTier3, avg_ti, avg_to, avg_diff, avg_ri, avg_ro, akkuTier2.warAktiv);
+    akkuTier3.min_diff = min(akkuTier3.min_diff, akkuTier2.min_diff);
+    akkuTier3.min_rh_in = min(akkuTier3.min_rh_in, akkuTier2.min_rh_in);
+
+    akkuTier2 = Akkumulator();
+
+    if (jetzt - t3_letzterEintrag >= TIER3_INTERVAL_MS && akkuTier3.anzahl > 0) {
+      t3_letzterEintrag = jetzt;
+      t3_td_in[t3_index] = toI16(akkuTier3.summe_td_in / akkuTier3.anzahl);
+      t3_td_out[t3_index] = toI16(akkuTier3.summe_td_out / akkuTier3.anzahl);
+      t3_diff_avg[t3_index] = toI16(akkuTier3.summe_diff / akkuTier3.anzahl);
+      t3_diff_min[t3_index] = toI16(akkuTier3.min_diff);
+      t3_rh_in_avg[t3_index] = toI16(akkuTier3.summe_rh_in / akkuTier3.anzahl);
+      t3_rh_in_min[t3_index] = toI16(akkuTier3.min_rh_in);
+      t3_rh_out[t3_index] = toI16(akkuTier3.summe_rh_out / akkuTier3.anzahl);
+      t3_status[t3_index] = akkuTier3.warAktiv;
+      t3_index = (t3_index + 1) % TIER3_POINTS;
+      akkuTier3 = Akkumulator();
+    }
+  }
 }
 
 void aktualisiereSensoren() {
@@ -249,6 +357,7 @@ void steuerlogik() {
     }
     setLEDs(false, false, true);
     statusText = "Austrocknungsschutz – Lüftung aus";
+    historieAktualisieren();  
     publishAllStates();
     return;
   }
@@ -263,6 +372,7 @@ void steuerlogik() {
     }
     setLEDs(false, false, true);
     statusText = "Temperaturschutz – Lüftung aus";
+    historieAktualisieren();  
     publishAllStates();
     return;
   }
@@ -306,14 +416,7 @@ void steuerlogik() {
     }
 
     // Historie aktualisieren
-    td_in_history[history_index] = td_in;
-    td_out_history[history_index] = td_out;
-    td_diff_history[history_index] = diff;
-    rh_in_history[history_index] = rh_in;
-    rh_out_history[history_index] = rh_out;
-    status_history[history_index] = lueftungAktiv;
-    history_index = (history_index + 1) % MAX_POINTS;
-
+    historieAktualisieren();
     publishAllStates();
     return;
   }
@@ -353,14 +456,7 @@ void steuerlogik() {
   }
 
   // Historie aktualisieren
-  td_in_history[history_index] = td_in;
-  td_out_history[history_index] = td_out;
-  td_diff_history[history_index] = diff;
-  rh_in_history[history_index] = rh_in;
-  rh_out_history[history_index] = rh_out;
-  status_history[history_index] = lueftungAktiv;
-  history_index = (history_index + 1) % MAX_POINTS;
-
+  historieAktualisieren();
   publishAllStates();
 }
 
@@ -368,6 +464,8 @@ void steuerlogik() {
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String val;
   for (unsigned int i = 0; i < length; i++) val += (char)payload[i];
+  Serial.println("MQTT RX: topic='" + String(topic) + "' payload='" + val + "'");
+  Serial.println("Erwartet mqttTempInnen='" + mqttTempInnen + "'");
   float fval = val.toFloat();
   if (String(topic) == mqttTempInnen) mqtt_t_in = fval;
   if (String(topic) == mqttHygroInnen) mqtt_rh_in = fval;
@@ -544,28 +642,39 @@ void reconnectMQTT() {
 }
 
 void handleChartData() {
-  String json = "[";
-  for (int i = 0; i < MAX_POINTS; i++) {
-    int idx = (history_index + i) % MAX_POINTS;
-    json += "{";
-    auto f2 = [](float val) {
-      return isnan(val) || isinf(val) ? "null" : String(val, 2);
-    };
-    auto f1 = [](float val) {
-      return isnan(val) || isinf(val) ? "null" : String(val, 1);
-    };
+  String tier = server.hasArg("tier") ? server.arg("tier") : "1";
+  auto f2 = [](int16_t v) {
+    return v == HIST_NULL ? String("null") : String(v / 10.0, 1);
+  };
 
-    json += "\"td_in\":" + f2(td_in_history[idx]) + ",";
-    json += "\"td_out\":" + f2(td_out_history[idx]) + ",";
-    json += "\"diff\":" + f2(td_diff_history[idx]) + ",";
-    json += "\"rh_in\":" + f1(rh_in_history[idx]) + ",";
-    json += "\"rh_out\":" + f1(rh_out_history[idx]) + ",";
-    json += "\"status\":" + String(status_history[idx] ? 1 : 0);
-    json += "}";
-    if (i < MAX_POINTS - 1) json += ",";
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "application/json", "");
+  server.sendContent("[");
+
+  auto sendeTier = [&](int16_t* ti, int16_t* to, int16_t* davg, int16_t* dmin,
+                        int16_t* riavg, int16_t* rimin, int16_t* ro, bool* st, int n, int startIdx) {
+    for (int i = 0; i < n; i++) {
+      int idx = (startIdx + i) % n;
+      String entry = "";
+      if (i > 0) entry += ",";
+      entry += "{\"td_in\":" + f2(ti[idx]) + ",\"td_out\":" + f2(to[idx]) + ",";
+      entry += "\"diff\":" + f2(davg[idx]) + ",\"diff_min\":" + f2(dmin[idx]) + ",";
+      entry += "\"rh_in\":" + f2(riavg[idx]) + ",\"rh_in_min\":" + f2(rimin[idx]) + ",";
+      entry += "\"rh_out\":" + f2(ro[idx]) + ",\"status\":" + String(st[idx] ? 1 : 0) + "}";
+      server.sendContent(entry);
+    }
+  };
+
+  if (tier == "2") {
+    sendeTier(t2_td_in, t2_td_out, t2_diff_avg, t2_diff_min, t2_rh_in_avg, t2_rh_in_min, t2_rh_out, t2_status, TIER2_POINTS, t2_index);
+  } else if (tier == "3") {
+    sendeTier(t3_td_in, t3_td_out, t3_diff_avg, t3_diff_min, t3_rh_in_avg, t3_rh_in_min, t3_rh_out, t3_status, TIER3_POINTS, t3_index);
+  } else {
+    sendeTier(t1_td_in, t1_td_out, t1_diff, t1_diff, t1_rh_in, t1_rh_in, t1_rh_out, t1_status, TIER1_POINTS, t1_index);
   }
-  json += "]";
-  server.send(200, "application/json", json);
+
+  server.sendContent("]");
+  server.sendContent(""); // beendet die Chunked-Übertragung
 }
 
 void handleLiveData() {
@@ -646,11 +755,18 @@ String getMainScripts() {
 
       async function updateChart() {
         try {
-          const r = await fetch('/chartdata');
+          const [rangeStr, tier] = document.getElementById('rangeSelector').value.split('|');
+          const range = parseFloat(rangeStr);
+          const r = await fetch('/chartdata?tier=' + tier);
           const d = await r.json();
-          const range = parseFloat(document.getElementById('rangeSelector').value);
-          const totalPoints = Math.floor(range * (3600 / 5));
-          const recent = d.slice(-totalPoints);
+
+          let recent;
+          if (tier === '1') {
+            const totalPoints = Math.floor(range * (3600 / 5));
+            recent = d.slice(-totalPoints);
+          } else {
+            recent = d;
+          }
 
           const l = recent.map((_, i) => i);
           const tdIn = recent.map(p => p.td_in);
@@ -1163,9 +1279,12 @@ String getDashboardHtml() {
   html += "<form id='rangeForm' onsubmit='return false;'>"
           "<label><strong>Zeitraum:</strong></label> "
           "<select id='rangeSelector' onchange='updateChart()'>"
-          "<option value='0.1'>10 Minuten</option>"
-          "<option value='0.5'>30 Minuten</option>"
-          "<option value='1'>1 Stunden</option>"
+          "<option value='0.1|1'>10 Minuten</option>"
+          "<option value='0.5|1'>30 Minuten</option>"
+          "<option value='1|1'>1 Stunde</option>"
+          "<option value='24|2'>24 Stunden</option>"
+          "<option value='168|3'>7 Tage</option>"
+          "<option value='720|3'>30 Tage</option>"
           "</select>"
           "</form>";
   html += "<canvas id='chart' width='400' height='100'></canvas>";
@@ -1313,7 +1432,8 @@ String getSettingsHtml() {
 
   // Firmware-Button
   html += "<fieldset><legend>Firmware</legend>";
-  html += "<p><button type='button' onclick=\"showTab('settings'); setTimeout(openFirmwareModalUI, 100);\">Firmware-Update</button></p>";
+  html += "<p><button type='button' onclick=\"showTab('settings'); setTimeout(openFirmwareModalUI, 100);\">Firmware-Update</button>";
+  html += "<a class='button-link' href='/firmwarebackup' download>Aktuelle Firmware sichern (Download)</a></p>";
   html += "</fieldset>";
 
   // Neustart-Button
@@ -1573,6 +1693,38 @@ void prepareForFirmwareUpdate() {
   logEvent("Firmware-Update vorbereitet. Dienste deaktiviert.");
 }
 
+void handleFirmwareBackup() {
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  if (!running) {
+    server.send(500, "text/plain", "Konnte laufende Partition nicht ermitteln.");
+    return;
+  }
+
+  size_t size = running->size;
+  String filename = "TaupunktLueftung_" + String(FIRMWARE_VERSION) + "_backup.bin";
+
+  server.sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
+  server.setContentLength(size);
+  server.send(200, "application/octet-stream", "");
+
+  const size_t CHUNK = 1024;
+  uint8_t buf[CHUNK];
+  size_t offset = 0;
+
+  while (offset < size) {
+    size_t toRead = min(CHUNK, size - offset);
+    esp_err_t err = esp_partition_read(running, offset, buf, toRead);
+    if (err != ESP_OK) {
+      Serial.println("Fehler beim Lesen der Partition bei Offset " + String(offset));
+      break;
+    }
+    server.sendContent((const char*)buf, toRead);
+    offset += toRead;
+  }
+
+  logEvent("Firmware-Backup heruntergeladen (" + String(size) + " Bytes)");
+}
+
 // --- Setup --->
 //Setup Wifi - WLAN-Verbindung herstellen (via Access Point falls keine bekannt)
 void setupWiFi() {
@@ -1654,6 +1806,23 @@ void setupPreferences() {
   zielFeuchteInnen = prefs.getFloat("ziel_rh", 45.0);
   hysterese = prefs.getFloat("hysterese", 2.0);
   prefs.end();
+  t2_letzterEintrag = millis();
+  t3_letzterEintrag = millis();
+  // Historie-Arrays mit "keine Daten"-Sentinel vorbefüllen (verhindert falsche 0°C-Nulllinie im Chart)
+  for (int i = 0; i < TIER1_POINTS; i++) {
+    t1_td_in[i] = t1_td_out[i] = t1_diff[i] = t1_rh_in[i] = t1_rh_out[i] = HIST_NULL;
+    t1_status[i] = false;
+  }
+  for (int i = 0; i < TIER2_POINTS; i++) {
+    t2_td_in[i] = t2_td_out[i] = t2_diff_avg[i] = t2_diff_min[i] = HIST_NULL;
+    t2_rh_in_avg[i] = t2_rh_in_min[i] = t2_rh_out[i] = HIST_NULL;
+    t2_status[i] = false;
+  }
+  for (int i = 0; i < TIER3_POINTS; i++) {
+    t3_td_in[i] = t3_td_out[i] = t3_diff_avg[i] = t3_diff_min[i] = HIST_NULL;
+    t3_rh_in_avg[i] = t3_rh_in_min[i] = t3_rh_out[i] = HIST_NULL;
+    t3_status[i] = false;
+  }
 }
 //Setup MQTT
 void setupMQTT() {
@@ -1713,6 +1882,7 @@ void setupWebServer() {
     }
   });
   server.on("/hostname", HTTP_POST, handleHostnameUpdate);
+  server.on("/firmwarebackup", HTTP_GET, handleFirmwareBackup);
   server.on("/update", HTTP_POST, []() {
   server.sendHeader("Connection", "close");
 
@@ -1818,7 +1988,8 @@ void loop() {
       digitalWrite(STATUS_RED_PIN, ledState);
     }
 
-    // Trotzdem Webserver + Sensor checken!
+    // Trotzdem MQTT + Webserver + Sensor checken!
+    handleMQTT();        // <-- NEU
     handleWebServer();
     handleSensorzyklus();
     return;
