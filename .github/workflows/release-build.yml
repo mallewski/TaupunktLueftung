@@ -1,0 +1,50 @@
+name: Build and Release Firmware
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repo auschecken
+        uses: actions/checkout@v4
+
+      - name: Arduino CLI installieren
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: ESP32-Board-Paket installieren
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      - name: Benötigte Bibliotheken installieren
+        run: |
+          arduino-cli lib install "WiFiManager"
+          arduino-cli lib install "PubSubClient"
+          arduino-cli lib install "Adafruit SHT31 Library"
+          arduino-cli lib install "DHT sensor library"
+          arduino-cli lib install "Adafruit Unified Sensor"
+
+      - name: secrets.h aus GitHub Secret erzeugen
+        run: |
+          echo "#ifndef SECRETS_H" > secrets.h
+          echo "#define SECRETS_H" >> secrets.h
+          echo "#define CONFIG_PASSWORD \"${{ secrets.CONFIG_PASSWORD }}\"" >> secrets.h
+          echo "#endif" >> secrets.h
+
+      - name: Sketch kompilieren
+        run: |
+          arduino-cli compile --fqbn esp32:esp32:esp32 --output-dir ./build .
+
+      - name: Binary umbenennen
+        run: |
+          cp ./build/*.ino.bin ./TaupunktLueftung.bin
+
+      - name: An Release anhängen
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./TaupunktLueftung.bin
