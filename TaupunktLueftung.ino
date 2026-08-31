@@ -1566,13 +1566,6 @@ void prepareForFirmwareUpdate() {
   logEvent("Firmware-Update vorbereitet. Dienste deaktiviert.");
 }
 
-void handleReboot() {
-  server.send(200, "text/plain", "Neustart wird durchgeführt...");
-  logEvent("Neustart über Weboberfläche ausgelöst");
-  delay(500);
-  ESP.restart();
-}
-
 // --- Setup --->
 //Setup Wifi - WLAN-Verbindung herstellen (via Access Point falls keine bekannt)
 void setupWiFi() {
