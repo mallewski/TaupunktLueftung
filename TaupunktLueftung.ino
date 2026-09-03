@@ -1,3 +1,4 @@
+
 #include <Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -39,16 +40,13 @@ String hostname = DEFAULT_HOSTNAME;
 bool firmwareUpdateSuccess = false;
 bool mqttAktivVorUpdate = false;
 
-//Umschaltung zwischen DHT22 (Pin17) und SHT31 für Sensor Außen
-//#define SENSOR_TYP_AUSSEN_SHT31  // auskommentieren für DHT22
-#ifdef SENSOR_TYP_AUSSEN_SHT31
-Adafruit_SHT31 shtAussen = Adafruit_SHT31();
-#else
+//Umschaltung zwischen DHT22 (Pin17) und SHT31 für Sensor Außen (zur Laufzeit im Webinterface wählbar)
 #include <DHT.h>
 #define DHTPIN 17
 #define DHTTYPE DHT22
 DHT dht(DHTPIN, DHTTYPE);
-#endif
+Adafruit_SHT31 shtAussen = Adafruit_SHT31();
+String sensorTypAussen = "dht22"; // "dht22" oder "sht31" – wird aus Preferences geladen, Default entspricht bisherigem Verhalten
 
 Preferences prefs;
 WebServer server(80);
@@ -273,12 +271,11 @@ void aktualisiereSensoren() {
     }
   }
 
-#ifdef SENSOR_TYP_AUSSEN_SHT31
-  // Außen – SHT31
+  // Außen
   if (modus_aussen == "mqtt" && mqttAktiv) {
     t_out = mqtt_t_out;
     rh_out = mqtt_rh_out;
-  } else {
+  } else if (sensorTypAussen == "sht31") {
     t_out = shtAussen.readTemperature();
     rh_out = shtAussen.readHumidity();
 
@@ -293,13 +290,7 @@ void aktualisiereSensoren() {
         Serial.println("SHT31 außen Re-Init fehlgeschlagen.");
       }
     }
-  }
-#else
-  // Außen – DHT22
-  if (modus_aussen == "mqtt" && mqttAktiv) {
-    t_out = mqtt_t_out;
-    rh_out = mqtt_rh_out;
-  } else {
+  } else { // dht22
     t_out = dht.readTemperature();
     rh_out = dht.readHumidity();
 
@@ -318,7 +309,6 @@ void aktualisiereSensoren() {
       }
     }
   }
-#endif
 
   // Fehlerstatus getrennt prüfen
   sensorFehlerInnen = isnan(t_in) || isnan(rh_in);
@@ -690,12 +680,12 @@ void handleLiveData() {
     unsigned long remaining = (mindestPause_ms - (now - letzteDeaktivierung)) / 1000;
     char buffer[6];
     snprintf(buffer, sizeof(buffer), "%lu:%02lu", remaining / 60, remaining % 60);
-    timerInfo = String(buffer) + " min Sperre";
+    timerInfo = String(buffer) + " min Sperre";
   } else if (lueftungAktiv && now - letzteAktivierung < mindestLaufzeit_ms) {
     unsigned long remaining = (mindestLaufzeit_ms - (now - letzteAktivierung)) / 1000;
     char buffer[6];
     snprintf(buffer, sizeof(buffer), "%lu:%02lu", remaining / 60, remaining % 60);
-    timerInfo = String(buffer) + " min Mindestlaufzeit";
+    timerInfo = String(buffer) + " min Mindestlaufzeit";
   }
 
   auto f1 = [](float val) {
@@ -1334,7 +1324,7 @@ String getSettingsHtml() {
   html += "<form id='schwelleForm' method='POST' action='/setSchwelle'>";
   html += "Taupunkt-Differenz (°C), ab der gelüftet wird:<br>";
   html += "<input type='number' step='0.1' name='schwelle' value='" + String(taupunktDifferenzSchwellwert, 1) + "' "
-          "title='Empfohlener Wert: 4,0 °C\n\nDie Außenluft muss mindestens so viel \"trockener\" sein (Taupunkt-Differenz), damit gelüftet wird.\n\nTipp: Höher = vorsichtiger, niedriger = aggressiver lüften.'><br>";
+          "title='Empfohlener Wert: 4,0 °C\n\nDie Außenluft muss mindestens so viel \"trockener\" sein (Taupunkt-Differenz), damit gelüftet wird.\n\nTipp: Höher = vorsichtiger, niedriger = aggressiver lüften.'><br>";
   html += "<input type='submit' value='Schwellenwert speichern'>";
   html += "</form></fieldset>";
   
@@ -1366,6 +1356,10 @@ String getSettingsHtml() {
   html += "<option value='hardware'" + String(modus_aussen == "hardware" ? " selected" : "") + ">Hardware</option>";
   html += "<option value='mqtt'" + String(modus_aussen == "mqtt" ? " selected" : "") + ">MQTT</option>";
   html += "</select><br>";
+  html += "Sensortyp außen: <select name='sensor_typ_aussen'>";
+  html += "<option value='dht22'" + String(sensorTypAussen == "dht22" ? " selected" : "") + ">DHT22</option>";
+  html += "<option value='sht31'" + String(sensorTypAussen == "sht31" ? " selected" : "") + ">SHT31</option>";
+  html += "</select><br>";
   html += "<input type='submit' value='Modus speichern'" + String(disabled ? " disabled" : "") + ">";
   html += "</form></fieldset>";
 
@@ -1375,7 +1369,7 @@ String getSettingsHtml() {
   html += "<form id='mqttConfigForm' method='POST' action='/mqttconfig'>";
   html += "<p><strong>MQTT-Server</strong> Zugangsdaten:</p>";
   html += "Server: <input name='server' value='" + String(mqttServer) + "' "
-          "title='Hostname oder IP-Adresse deines MQTT-Brokers, z. B. 192.168.1.10 oder mqtt.local'><br>";
+          "title='Hostname oder IP-Adresse deines MQTT-Brokers, z. B. 192.168.1.10 oder mqtt.local'><br>";
   html += "Port: <input name='port' value='" + String(mqttPort) + "' "
           "title='Standardmäßig 1883. Passe den Port an, falls dein Broker einen anderen verwendet.'><br>";
   html += "Benutzer: <input name='user' value='" + String(mqttUser) + "' "
@@ -1388,18 +1382,18 @@ String getSettingsHtml() {
   html += "<form id='discoveryPrefixForm' method='POST' action='/mqttdiscoveryprefix'>";
   html += "<p><strong>MQTT Discovery Prefix</strong>:</p>";
   html += "<input name='mqtt_discovery_prefix' value='" + mqttDiscoveryPrefix + "' "
-          "title='Prefix für MQTT Auto-Discovery, z. B. homeassistant/'><br>";
+          "title='Prefix für MQTT Auto-Discovery, z. B. homeassistant/'><br>";
   html += "<input type='submit' value='Discovery-Prefix speichern'>";
   html += "</form>";
   html += "<form id='mqttTopicsForm' method='POST' action='/mqtttopics'>";
   html += "<p><strong>MQTT-Prefix</strong> für alle ausgehenden Nachrichten:</p>";
   html += "Publish-Prefix: <input name='mqtt_pub_prefix' value='" + mqttPublishPrefix + "' "
-          "title='Dieses Präfix wird für alle automatisch gesendeten MQTT-Nachrichten verwendet, z. B. esp32/innen/. Achte auf einen abschließenden Slash!'><br>";
+          "title='Dieses Präfix wird für alle automatisch gesendeten MQTT-Nachrichten verwendet, z. B. esp32/innen/. Achte auf einen abschließenden Slash!'><br>";
   html += "<p><strong>Abonnierte MQTT-Topics</strong> für empfangene Sensordaten:</p>";
   html += "Innen Temperatur: <input name='temp_innen' value='" + mqttTempInnen + "' "
           "title='MQTT-Topic, von dem Temperaturwerte (in °C) für den Innenraum empfangen werden. Nur bei MQTT-Modus aktiv.'><br>";
   html += "Innen Feuchte: <input name='hygro_innen' value='" + mqttHygroInnen + "' "
-          "title='MQTT-Topic, von dem Luftfeuchtigkeit (0–100 %) für den Innenraum empfangen wird.'><br>";
+          "title='MQTT-Topic, von dem Luftfeuchtigkeit (0–100 %) für den Innenraum empfangen wird.'><br>";
   html += "Außen Temperatur: <input name='temp_aussen' value='" + mqttTempAussen + "' "
           "title='MQTT-Topic, von dem Temperaturwerte für den Außenbereich empfangen werden.'><br>";
   html += "Außen Feuchte: <input name='hygro_aussen' value='" + mqttHygroAussen + "' "
@@ -1425,8 +1419,8 @@ String getSettingsHtml() {
   html += "<fieldset><legend>Hostname</legend>";
   html += "<form id='hostnameForm' method='POST' action='/hostname'>";
   html += "Gerätename im Netzwerk (Hostname): <input name='hostname' value='" + hostname + "' "
-          "title='Dieser Name wird z. B. für mDNS (taupunktlueftung.local) verwendet. Achtung: Nach Änderung ist das Webinterface evtl. nur noch unter der neuen Adresse (oder über die IP-Adresse) erreichbar!' style='display:inline-block; width:auto;'><span style='margin-left:8px; color:gray;'>IP: " + WiFi.localIP().toString() + "</span><br>";
-  html += "<p style='font-size:0.9em;'>⚠️ Nach Änderung ist das Webinterface unter dem neuen Namen erreichbar (z. B. <code>http://neuername.local</code>).</p>";
+          "title='Dieser Name wird z. B. für mDNS (taupunktlueftung.local) verwendet. Achtung: Nach Änderung ist das Webinterface evtl. nur noch unter der neuen Adresse (oder über die IP-Adresse) erreichbar!' style='display:inline-block; width:auto;'><span style='margin-left:8px; color:gray;'>IP: " + WiFi.localIP().toString() + "</span><br>";
+  html += "<p style='font-size:0.9em;'>⚠️ Nach Änderung ist das Webinterface unter dem neuen Namen erreichbar (z. B. <code>http://neuername.local</code>).</p>";
   html += "<input type='submit' value='Hostname speichern'>";
   html += "</form></fieldset>";
 
@@ -1564,9 +1558,11 @@ void handleTimerSettings() {
 void handleSetModus() {
   if (server.hasArg("modus_innen")) modus_innen = server.arg("modus_innen");
   if (server.hasArg("modus_aussen")) modus_aussen = server.arg("modus_aussen");
+  if (server.hasArg("sensor_typ_aussen")) sensorTypAussen = server.arg("sensor_typ_aussen");
   prefs.begin("config", false);
   prefs.putString("modus_innen", modus_innen);
   prefs.putString("modus_aussen", modus_aussen);
+  prefs.putString("sensor_typ_aussen", sensorTypAussen);
   prefs.end();
   redirectToSettings();
 }
@@ -1781,11 +1777,8 @@ void setupSensoren() {
   setLEDs(false, false, false);
 
   shtInnen.begin(0x44);
-  #ifdef SENSOR_TYP_AUSSEN_SHT31
-    shtAussen.begin(0x45);  // optional: I²C-Adresse für den zweiten Sensor
-  #else
-    dht.begin();  // falls DHT22 verwendet wird
-  #endif
+  shtAussen.begin(0x45);
+  dht.begin();
 }
 //setup Preferences
 void setupPreferences() {
@@ -1797,6 +1790,7 @@ void setupPreferences() {
   letzteDeaktivierung = millis() - mindestPause_ms;
   modus_innen = prefs.getString("modus_innen", "hardware");
   modus_aussen = prefs.getString("modus_aussen", "hardware");
+  sensorTypAussen = prefs.getString("sensor_typ_aussen", "dht22");
   mqttAktiv = prefs.getBool("mqtt", false);
   schutzVorAuskuehlungAktiv = prefs.getBool("tempschutz", true);
   minTempInnen = prefs.getFloat("min_temp", 12.0);
