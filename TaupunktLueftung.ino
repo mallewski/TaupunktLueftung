@@ -28,7 +28,7 @@ bool debugMQTT = false; // Debug für MQTT Discovery
 #define NAME "TaupunktLueftung"
 #define DEFAULT_HOSTNAME "TaupunktLueftung"
 String hostname = DEFAULT_HOSTNAME;
-#define FIRMWARE_VERSION "v3.8.1"
+#define FIRMWARE_VERSION "v3.8.7"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
@@ -38,6 +38,7 @@ String hostname = DEFAULT_HOSTNAME;
 //Frimware-Update
 bool firmwareUpdateSuccess = false;
 bool mqttAktivVorUpdate = false;
+bool firmwareUploadAuthorized = false; // wird pro Upload-Request in UPLOAD_FILE_START gesetzt
 
 //Umschaltung zwischen DHT22 (Pin17) und SHT31 für Sensor Außen (zur Laufzeit im Webinterface wählbar)
 #include <DHT.h>
@@ -53,10 +54,25 @@ WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 Adafruit_SHT31 shtInnen = Adafruit_SHT31();
 
-const char* configPassword = CONFIG_PASSWORD;
+char configUsername[32] = "admin"; // Default; über Einstellungen änderbar (dann in NVS gespeichert)
+char configPassword[64] = CONFIG_PASSWORD; // Default aus secrets.h; über Einstellungen änderbar (dann in NVS gespeichert)
 
 bool sensorFehlerInnen = false;
 bool sensorFehlerAussen = false;
+unsigned long sensorFehlerSeit = 0; // 0 = kein Fehler aktiv; Fail-Safe-Timer (kostet nur 4 Byte RAM)
+
+// Wie lange darf ein Sensorfehler andauern, bevor die Lüftung zwangsweise
+// abgeschaltet wird? Kurze Aussetzer (I2C-Hänger etc.) werden dank Re-Init
+// in aktualisiereSensoren() meist schon im selben 5s-Zyklus behoben, daher
+// reicht eine kurze Gnadenfrist, um unnötiges Relais-Takten zu vermeiden.
+#define SENSOR_FAILSAFE_MS (15UL * 1000UL)
+// Re-Init Schutz für Sensoren
+uint8_t reinitVersucheInnen = 0;
+uint8_t reinitVersucheAussen = 0;
+unsigned long letzterReinitInnen = 0;
+unsigned long letzterReinitAussen = 0;
+#define MAX_REINIT_VERSUCHE 3
+#define REINIT_COOLDOWN_MS (5UL * 60UL * 1000UL) // 5 Minuten Pause nach Fehlschlägen
 
 char mqttServer[64] = "";     // leer oder z.B. "192.168.1.100"
 int mqttPort = 1883;          // Standard-MQTT-Port
@@ -243,7 +259,9 @@ void historieAktualisieren() {
 }
 
 void aktualisiereSensoren() {
-  // Innen
+  unsigned long jetzt = millis();
+
+  // --- INNEN ---
   if (modus_innen == "mqtt" && mqttAktiv) {
     t_in = mqtt_t_in;
     rh_in = mqtt_rh_in;
@@ -252,25 +270,32 @@ void aktualisiereSensoren() {
     rh_in = shtInnen.readHumidity();
 
     if (isnan(t_in) || isnan(rh_in)) {
-      Serial.println("SHT31 innen liefert NAN – versuche Re-Init...");
-      if (shtInnen.begin(0x44)) {
-        delay(20);
-        float temp = shtInnen.readTemperature();
-        float hum = shtInnen.readHumidity();
-        if (!isnan(temp) && !isnan(hum)) {
-          t_in = temp;
-          rh_in = hum;
-          Serial.println("SHT31 innen Re-Init erfolgreich.");
-        } else {
-          Serial.println("SHT31 innen Re-Init fehlgeschlagen (Werte weiterhin NAN).");
+      // Prüfen, ob Re-Init erlaubt ist (Cooldown abgelaufen oder noch Versuche frei)
+      if (reinitVersucheInnen < MAX_REINIT_VERSUCHE || (jetzt - letzterReinitInnen >= REINIT_COOLDOWN_MS)) {
+        if (jetzt - letzterReinitInnen >= REINIT_COOLDOWN_MS) reinitVersucheInnen = 0; // Cooldown vorbei -> Resetten
+
+        reinitVersucheInnen++;
+        letzterReinitInnen = jetzt;
+        Serial.printf("SHT31 innen liefert NAN – Re-Init Versuch %d/%d...\n", reinitVersucheInnen, MAX_REINIT_VERSUCHE);
+
+        if (shtInnen.begin(0x44)) {
+          delay(20);
+          float temp = shtInnen.readTemperature();
+          float hum = shtInnen.readHumidity();
+          if (!isnan(temp) && !isnan(hum)) {
+            t_in = temp;
+            rh_in = hum;
+            reinitVersucheInnen = 0; // Erfolg! Zähler zurücksetzen
+            Serial.println("SHT31 innen Re-Init erfolgreich.");
+          }
         }
-      } else {
-        Serial.println("SHT31 innen Re-Init fehlgeschlagen (begin() false).");
       }
+    } else {
+      reinitVersucheInnen = 0; // Sensor liefert wieder normale Werte
     }
   }
 
-  // Außen
+  // --- AUSSEN ---
   if (modus_aussen == "mqtt" && mqttAktiv) {
     t_out = mqtt_t_out;
     rh_out = mqtt_rh_out;
@@ -279,37 +304,57 @@ void aktualisiereSensoren() {
     rh_out = shtAussen.readHumidity();
 
     if (isnan(t_out) || isnan(rh_out)) {
-      Serial.println("SHT31 außen liefert NAN – versuche Re-Init...");
-      if (shtAussen.begin(0x45)) {
-        delay(20);
-        t_out = shtAussen.readTemperature();
-        rh_out = shtAussen.readHumidity();
-        Serial.println("SHT31 außen Re-Init erfolgreich.");
-      } else {
-        Serial.println("SHT31 außen Re-Init fehlgeschlagen.");
+      if (reinitVersucheAussen < MAX_REINIT_VERSUCHE || (jetzt - letzterReinitAussen >= REINIT_COOLDOWN_MS)) {
+        if (jetzt - letzterReinitAussen >= REINIT_COOLDOWN_MS) reinitVersucheAussen = 0;
+
+        reinitVersucheAussen++;
+        letzterReinitAussen = jetzt;
+        Serial.printf("SHT31 außen liefert NAN – Re-Init Versuch %d/%d...\n", reinitVersucheAussen, MAX_REINIT_VERSUCHE);
+
+        if (shtAussen.begin(0x45)) {
+          delay(20);
+          float temp = shtAussen.readTemperature();
+          float hum = shtAussen.readHumidity();
+          if (!isnan(temp) && !isnan(hum)) {
+            t_out = temp;
+            rh_out = hum;
+            reinitVersucheAussen = 0;
+            Serial.println("SHT31 außen Re-Init erfolgreich.");
+          }
+        }
       }
+    } else {
+      reinitVersucheAussen = 0;
     }
   } else { // dht22
     t_out = dht.readTemperature();
     rh_out = dht.readHumidity();
 
     if (isnan(t_out) || isnan(rh_out)) {
-      Serial.println("DHT22 liefert NAN – versuche Re-Init...");
-      dht.begin();
-      delay(100);
-      float temp = dht.readTemperature();
-      float hum = dht.readHumidity();
-      if (!isnan(temp) && !isnan(hum)) {
-        t_out = temp;
-        rh_out = hum;
-        Serial.println("DHT22 Re-Init erfolgreich.");
-      } else {
-        Serial.println("DHT22 Re-Init fehlgeschlagen (Werte weiterhin NAN).");
+      if (reinitVersucheAussen < MAX_REINIT_VERSUCHE || (jetzt - letzterReinitAussen >= REINIT_COOLDOWN_MS)) {
+        if (jetzt - letzterReinitAussen >= REINIT_COOLDOWN_MS) reinitVersucheAussen = 0;
+
+        reinitVersucheAussen++;
+        letzterReinitAussen = jetzt;
+        Serial.printf("DHT22 liefert NAN – Re-Init Versuch %d/%d...\n", reinitVersucheAussen, MAX_REINIT_VERSUCHE);
+
+        dht.begin();
+        delay(100);
+        float temp = dht.readTemperature();
+        float hum = dht.readHumidity();
+        if (!isnan(temp) && !isnan(hum)) {
+          t_out = temp;
+          rh_out = hum;
+          reinitVersucheAussen = 0;
+          Serial.println("DHT22 Re-Init erfolgreich.");
+        }
       }
+    } else {
+      reinitVersucheAussen = 0;
     }
   }
 
-  // Fehlerstatus getrennt prüfen
+  // --- Fehlerstatus getrennt prüfen ---
   sensorFehlerInnen = isnan(t_in) || isnan(rh_in);
   sensorFehlerAussen = isnan(t_out) || isnan(rh_out);
 
@@ -331,10 +376,39 @@ void aktualisiereSensoren() {
 }
 
 void steuerlogik() {
-  if (isnan(td_in) || isnan(td_out) || isnan(rh_in) || isnan(t_in)) return;
+  unsigned long jetzt = millis();
+
+  // === 0. Fail-Safe bei Sensorausfall ===
+  // Vorher: bei NaN wurde hier einfach "return" gemacht - das Relais blieb
+  // dabei in seinem letzten Zustand stehen. War die Lüftung gerade aktiv,
+  // lief sie bei einem dauerhaften Sensordefekt unbegrenzt weiter (keine
+  // Historie, kein Status-Update, kein automatisches Abschalten).
+  if (isnan(td_in) || isnan(td_out) || isnan(rh_in) || isnan(t_in)) {
+    if (sensorFehlerSeit == 0) sensorFehlerSeit = jetzt;
+
+    if (jetzt - sensorFehlerSeit >= SENSOR_FAILSAFE_MS) {
+      // Fehler hält schon länger an -> sicherer Zustand erzwingen
+      if (lueftungAktiv) {
+        digitalWrite(RELAY_LED_PIN, LOW);
+        lueftungAktiv = false;
+        letzteDeaktivierung = jetzt;
+        logEvent("Lüftung zwangsweise deaktiviert - Sensorfehler (Fail-Safe)");
+      }
+      statusText = "Sensorfehler - Lüftung aus (Fail-Safe)";
+    } else {
+      // Kurze Gnadenfrist: evtl. nur ein einzelner Lesefehler/I2C-Aussetzer
+      statusText = "Sensorfehler - warte auf Fail-Safe-Abschaltung";
+    }
+
+    // Weiterhin Historie/MQTT aktualisieren, damit der Fehler sichtbar bleibt
+    // und keine Datenlücke ohne Erklärung im Chart entsteht.
+    historieAktualisieren();
+    publishAllStates();
+    return;
+  }
+  sensorFehlerSeit = 0; // Sensoren wieder ok -> Fail-Safe-Timer zurücksetzen
 
   float diff = td_in - td_out;
-  unsigned long jetzt = millis();
 
   // === 1. Austrocknungsschutz ===
   if (schutzVorAustrocknungAktiv && rh_in < minFeuchteInnen) {
@@ -632,25 +706,42 @@ void reconnectMQTT() {
 
 void handleChartData() {
   String tier = server.hasArg("tier") ? server.arg("tier") : "1";
-  auto f2 = [](int16_t v) {
-    return v == HIST_NULL ? String("null") : String(v / 10.0, 1);
-  };
 
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "application/json", "");
   server.sendContent("[");
 
+  // Hilfsfunktion zum Formatieren einzelner Zahlen als C-String
+  auto formatVal = [](char* buf, size_t len, int16_t v) {
+    if (v == HIST_NULL) {
+      snprintf(buf, len, "null");
+    } else {
+      snprintf(buf, len, "%.1f", v / 10.0);
+    }
+  };
+
   auto sendeTier = [&](int16_t* ti, int16_t* to, int16_t* davg, int16_t* dmin,
-                        int16_t* riavg, int16_t* rimin, int16_t* ro, bool* st, int n, int startIdx) {
+                       int16_t* riavg, int16_t* rimin, int16_t* ro, bool* st, int n, int startIdx) {
+    char entryBuf[256];
+    char s_ti[10], s_to[10], s_davg[10], s_dmin[10], s_riavg[10], s_rimin[10], s_ro[10];
+
     for (int i = 0; i < n; i++) {
       int idx = (startIdx + i) % n;
-      String entry = "";
-      if (i > 0) entry += ",";
-      entry += "{\"td_in\":" + f2(ti[idx]) + ",\"td_out\":" + f2(to[idx]) + ",";
-      entry += "\"diff\":" + f2(davg[idx]) + ",\"diff_min\":" + f2(dmin[idx]) + ",";
-      entry += "\"rh_in\":" + f2(riavg[idx]) + ",\"rh_in_min\":" + f2(rimin[idx]) + ",";
-      entry += "\"rh_out\":" + f2(ro[idx]) + ",\"status\":" + String(st[idx] ? 1 : 0) + "}";
-      server.sendContent(entry);
+
+      formatVal(s_ti, sizeof(s_ti), ti[idx]);
+      formatVal(s_to, sizeof(s_to), to[idx]);
+      formatVal(s_davg, sizeof(s_davg), davg[idx]);
+      formatVal(s_dmin, sizeof(s_dmin), dmin[idx]);
+      formatVal(s_riavg, sizeof(s_riavg), riavg[idx]);
+      formatVal(s_rimin, sizeof(s_rimin), rimin[idx]);
+      formatVal(s_ro, sizeof(s_ro), ro[idx]);
+
+      snprintf(entryBuf, sizeof(entryBuf),
+               "%s{\"td_in\":%s,\"td_out\":%s,\"diff\":%s,\"diff_min\":%s,\"rh_in\":%s,\"rh_in_min\":%s,\"rh_out\":%s,\"status\":%d}",
+               (i > 0) ? "," : "",
+               s_ti, s_to, s_davg, s_dmin, s_riavg, s_rimin, s_ro, st[idx] ? 1 : 0);
+
+      server.sendContent(entryBuf);
     }
   };
 
@@ -663,7 +754,7 @@ void handleChartData() {
   }
 
   server.sendContent("]");
-  server.sendContent(""); // beendet die Chunked-Übertragung
+  server.sendContent(""); // Beendet die Chunked-Übertragung
 }
 
 void handleLiveData() {
@@ -700,7 +791,8 @@ void handleLiveData() {
   json += "\"td_out\":" + f1(td_out) + ",";
   json += "\"zeit\":\"" + sichereUhrzeit + "\",";
   json += "\"status\":\"" + sichererStatus + "\",";
-  json += "\"timer\":\"" + timerInfo + "\"";
+  json += "\"timer\":\"" + timerInfo + "\",";
+  json += "\"schwelle\":" + String(taupunktDifferenzSchwellwert, 1); // ersetzt das frühere %SCHWELLE%-Replace im JS
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -724,13 +816,15 @@ void handleReboot() {
 }
 
 // --- Dashboard --->
-//JS-Script
-String getMainScripts() {
-  return R"rawliteral(
+//JS-Script (komplett statisch -> liegt im Flash (PROGMEM), landet nie als String im RAM)
+const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
     <script src='https://cdn.jsdelivr.net/npm/chart.js'></script>
     <script>
       // ===== Globale Konstanten =====
-      const SCHWELLWERT = %SCHWELLE%;
+      // Kein Server-seitiges Replace mehr nötig: der Wert kommt laufend aus
+      // /livedata (siehe updateLiveData) - dadurch kann dieses Script komplett
+      // statisch aus dem Flash gestreamt werden.
+      let SCHWELLWERT = 4.0;
       const COLOR_TD_IN = 'green';
       const COLOR_TD_OUT = 'blue';
       const COLOR_DIFF = 'orange';
@@ -828,9 +922,20 @@ String getMainScripts() {
               },
               options: {
                 responsive: true,
-                scales: { y: { beginAtZero: true, max: 1 } }
-              }
-            });
+                scales: { 
+                  y: { 
+                    beginAtZero: true, 
+                    max: 1, 
+                    ticks: { 
+                      stepSize: 1, 
+                      callback: function(value) {
+                        return value === 1 ? 'AN' : 'AUS';
+                        }
+                      } 
+                    } 
+                  }
+                }
+              });
 
             chartInitialized = true;
 
@@ -841,17 +946,17 @@ String getMainScripts() {
             chart.data.datasets[2].data = diff;
             chart.data.datasets[3].data = Array(l.length).fill(SCHWELLWERT);
             chart.data.datasets[4].data = Array(l.length).fill(-SCHWELLWERT);
-            chart.update();
+            chart.update('none');
 
             chart_humidity.data.labels = l;
             chart_humidity.data.datasets[0].data = rhIn;
             chart_humidity.data.datasets[1].data = rhOut;
-            chart_humidity.update();
+            chart_humidity.update('none');
 
             chart_status.data.labels = l;
             chart_status.data.datasets[0].data = status;
             chart_status.data.datasets[0].backgroundColor = status.map(s => s === 1 ? COLOR_STATUS_ON : COLOR_STATUS_OFF);
-            chart_status.update();
+            chart_status.update('none');
           }
         } catch (e) {
           console.error("Chart-Update-Fehler:", e);
@@ -879,6 +984,7 @@ String getMainScripts() {
         try {
           const res = await fetch('/livedata');
           const data = await res.json();
+          if (typeof data.schwelle === 'number' && !isNaN(data.schwelle)) SCHWELLWERT = data.schwelle;
           document.getElementById('zeit').textContent = data.zeit;
           document.getElementById('status_text').textContent = data.status;
           document.getElementById('timer_info').textContent = data.timer || "–";
@@ -977,6 +1083,56 @@ String getMainScripts() {
         }, 2000);
       }
 
+      // ===== Zugang (Benutzername/Passwort) ändern =====
+      // Bewusst kein ajaxFormHandler() hier: der zeigt "Gespeichert!" unabhängig
+      // vom HTTP-Status an. Bei Login-Daten wollen wir echte Fehler
+      // (leer, Tippfehler bei der Bestätigung, zu lang) auch wirklich sehen.
+      function submitBenutzernameForm(e) {
+        e.preventDefault();
+        const neu = document.getElementById('user_neu').value.trim();
+        if (!neu) { alert("Bitte einen Benutzernamen eingeben."); return false; }
+
+        fetch('/setUsername', {
+          method: "POST",
+          body: new URLSearchParams({ neuer_benutzername: neu })
+        }).then(res => {
+          if (res.ok) {
+            alert("Benutzername geändert. Der Browser fragt beim nächsten Zugriff neu nach den Zugangsdaten - dort den neuen Benutzernamen eingeben.");
+          } else {
+            res.text().then(msg => alert("Fehler: " + msg));
+          }
+        }).catch(err => {
+          console.error("Benutzername-Änderung fehlgeschlagen:", err);
+          alert("Fehler beim Speichern des Benutzernamens (Verbindung geprüft?).");
+        });
+        return false;
+      }
+
+      function submitPasswortForm(e) {
+        e.preventDefault();
+        const neu = document.getElementById('pw_neu').value;
+        const bestaetigung = document.getElementById('pw_bestaetigen').value;
+        if (!neu) { alert("Bitte ein neues Passwort eingeben."); return false; }
+        if (neu !== bestaetigung) { alert("Die Passwörter stimmen nicht überein."); return false; }
+
+        fetch('/setPassword', {
+          method: "POST",
+          body: new URLSearchParams({ neues_passwort: neu, passwort_bestaetigen: bestaetigung })
+        }).then(res => {
+          if (res.ok) {
+            document.getElementById('pw_neu').value = "";
+            document.getElementById('pw_bestaetigen').value = "";
+            alert("Passwort geändert. Der Browser fragt beim nächsten Zugriff neu nach den Zugangsdaten - dort das neue Passwort eingeben.");
+          } else {
+            res.text().then(msg => alert("Fehler: " + msg));
+          }
+        }).catch(err => {
+          console.error("Passwort-Änderung fehlgeschlagen:", err);
+          alert("Fehler beim Speichern des Passworts (Verbindung geprüft?).");
+        });
+        return false;
+      }
+
       function outsideClickModal(e) {
         const modal = document.getElementById("firmwareModal");
         const modalContent = document.querySelector(".modal-content");
@@ -1040,10 +1196,9 @@ String getMainScripts() {
       }
     </script>
   )rawliteral";
-}
-//CSS
-void handleCSS() {
-  String css = R"rawliteral(
+
+//CSS (komplett statisch -> liegt im Flash (PROGMEM), landet nie als String im RAM)
+const char CSS_CONTENT[] PROGMEM = R"rawliteral(
     body {
       font-family: Arial, sans-serif;
       background: #f8f9fa;
@@ -1224,34 +1379,41 @@ void handleCSS() {
       color: #2c5777;
     }
   )rawliteral";
-  server.send(200, "text/css", css);
+
+void handleCSS() {
+  server.send_P(200, "text/css", CSS_CONTENT);
 }
 
 //Root
 void handleRoot() {
-  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" + String(NAME) + "</title>";
-  
-  html += "<link rel='stylesheet' href='/style.css'>";
+  // Statt einmal einen mehrere KB großen String zusammenzubauen und dann per
+  // server.send() zu verschicken: die Seite wird stückweise gestreamt
+  // (server.sendContent), analog zu handleChartData()/handleFirmwareBackup().
+  // Der Heap braucht dadurch nie einen großen zusammenhängenden Block für die
+  // komplette Seite - die größten Brocken (CSS/JS) kommen zudem direkt aus
+  // dem Flash (PROGMEM) und landen gar nicht erst als String im RAM.
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
 
-  html += "</head><body>";
-  html += "<h1>" + String(NAME) + " " + String(FIRMWARE_VERSION) + " Interface</h1>";
+  server.sendContent("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" + String(NAME) + "</title>"
+                      "<link rel='stylesheet' href='/style.css'></head><body>");
+  server.sendContent("<h1>" + String(NAME) + " " + String(FIRMWARE_VERSION) + " Interface</h1>");
 
   // Tabs oben
-  html += "<p><button onclick=\"showTab('dashboard')\">Dashboard</button>";
-  html += "<button onclick=\"localStorage.setItem('manualSettingsClick','true'); showTab('settings')\">Einstellungen</button>";
+  server.sendContent("<p><button onclick=\"showTab('dashboard')\">Dashboard</button>"
+                      "<button onclick=\"localStorage.setItem('manualSettingsClick','true'); showTab('settings')\">Einstellungen</button>");
 
-  // Eingefügte UI-Blöcke:
-  html += getDashboardHtml();
-  html += getSettingsHtml();
-  html += getFirmwareModalHtml();
+  // Eingefügte UI-Blöcke: jede Sektion wird sofort gesendet statt vorher gesammelt
+  server.sendContent(getDashboardHtml());
+  server.sendContent(getSettingsHtml());
+  server.sendContent(getFirmwareModalHtml());
 
-  String script = getMainScripts();
-  script.replace("%SCHWELLE%", String(taupunktDifferenzSchwellwert));
-  html += script;
+  // Kein Server-seitiges %SCHWELLE%-Replace mehr nötig (Wert kommt jetzt live
+  // aus /livedata) -> JS kann komplett statisch aus dem Flash gestreamt werden.
+  server.sendContent_P(MAIN_SCRIPT_JS);
 
-  html += "</body></html>";
-
-  server.send(200, "text/html", html);
+  server.sendContent("</body></html>");
+  server.sendContent(""); // beendet die Chunked-Übertragung
 }
 //Dashboard
 String getDashboardHtml() {
@@ -1423,6 +1585,19 @@ String getSettingsHtml() {
   html += "<input type='submit' value='Hostname speichern'>";
   html += "</form></fieldset>";
 
+  // Zugang (Login) ändern: Benutzername und Passwort als zwei unabhängige
+  // Formulare im selben Fieldset (wie schon bei MQTT: mehrere Forms, ein Block).
+  html += "<fieldset><legend>Zugang (Login)</legend>";
+  html += "<form id='benutzernameForm' onsubmit='return submitBenutzernameForm(event);'>";
+  html += "Benutzername: <input type='text' id='user_neu' name='neuer_benutzername' value='" + String(configUsername) + "' autocomplete='username'><br>";
+  html += "<input type='submit' value='Benutzername ändern'>";
+  html += "</form>";
+  html += "<form id='passwortForm' onsubmit='return submitPasswortForm(event);'>";
+  html += "Neues Passwort: <input type='password' id='pw_neu' name='neues_passwort' autocomplete='new-password'><br>";
+  html += "Bestätigen: <input type='password' id='pw_bestaetigen' name='passwort_bestaetigen' autocomplete='new-password'><br>";
+  html += "<input type='submit' value='Passwort ändern'>";
+  html += "</form></fieldset>";
+
   // Firmware-Button
   html += "<fieldset><legend>Firmware</legend>";
   html += "<p><button type='button' onclick=\"showTab('settings'); setTimeout(openFirmwareModalUI, 100);\">Firmware-Update</button>";
@@ -1478,6 +1653,20 @@ String getFirmwareModalHtml() {
   )rawliteral";
 
   return html;
+}
+
+//Auth
+// HTTP-Basic-Auth statt eigenem Login/Session-System: server.authenticate()
+// prüft nur den vom Client mitgeschickten Authorization-Header - es wird
+// nichts Neues im RAM gehalten (kein Session-Speicher, kein Token-Store).
+// configPassword existierte vorher schon (aus secrets.h), wurde bisher aber
+// nirgends benutzt - das wird hier nachgeholt.
+bool requireAuth() {
+  if (!server.authenticate(configUsername, configPassword)) {
+    server.requestAuthentication(BASIC_AUTH, "TaupunktLueftung");
+    return false;
+  }
+  return true;
 }
 
 //Handler
@@ -1654,11 +1843,70 @@ void handleHostnameUpdate() {
   server.send(200, "text/html", html);
 }
 
+//Webinterface-Benutzername
+void handleSetUsername() {
+  String neu = server.hasArg("neuer_benutzername") ? server.arg("neuer_benutzername") : "";
+  neu.trim();
+
+  if (neu.length() == 0) {
+    server.send(400, "text/plain", "Benutzername darf nicht leer sein.");
+    return;
+  }
+  if (neu.length() >= sizeof(configUsername)) { // Platz für Nullterminierung lassen
+    server.send(400, "text/plain", "Benutzername zu lang (max. 31 Zeichen).");
+    return;
+  }
+
+  neu.toCharArray(configUsername, sizeof(configUsername));
+  prefs.begin("config", false);
+  prefs.putString("web_user", neu);
+  prefs.end();
+
+  logEvent("Webinterface-Benutzername geändert auf: " + neu);
+  server.send(200, "text/plain", "OK");
+}
+
+//Webinterface-Passwort
+void handleSetPassword() {
+  String neu = server.hasArg("neues_passwort") ? server.arg("neues_passwort") : "";
+  String bestaetigung = server.hasArg("passwort_bestaetigen") ? server.arg("passwort_bestaetigen") : "";
+
+  if (neu.length() == 0) {
+    server.send(400, "text/plain", "Passwort darf nicht leer sein.");
+    return;
+  }
+  if (neu.length() >= sizeof(configPassword)) { // Platz für Nullterminierung lassen
+    server.send(400, "text/plain", "Passwort zu lang (max. 63 Zeichen).");
+    return;
+  }
+  if (neu != bestaetigung) {
+    server.send(400, "text/plain", "Passwörter stimmen nicht überein.");
+    return;
+  }
+
+  neu.toCharArray(configPassword, sizeof(configPassword));
+  prefs.begin("config", false);
+  prefs.putString("web_pass", neu);
+  prefs.end();
+
+  logEvent("Webinterface-Passwort geändert");
+  server.send(200, "text/plain", "OK");
+}
+
 //Firmware
 void handleFirmwareUpload() {
   HTTPUpload& upload = server.upload();
 
   if (upload.status == UPLOAD_FILE_START) {
+    // Nur den Authorization-Header prüfen (keine Response senden!) - eine
+    // Antwort mitten im Multipart-Body würde den Parser der WebServer-Lib
+    // durcheinanderbringen. Der eigentliche 401 kommt über den regulären
+    // Handler unten (requireAuth()), sobald der Body fertig gelesen ist.
+    firmwareUploadAuthorized = server.authenticate(configUsername, configPassword);
+    if (!firmwareUploadAuthorized) {
+      Serial.println("Firmware-Upload abgelehnt: keine gültige Authentifizierung.");
+      return; // kein Update.begin() -> es wird nichts geflasht
+    }
     prepareForFirmwareUpdate();
     firmwareUpdateSuccess = false;
     Serial.printf("Update: %s\n", upload.filename.c_str());
@@ -1666,10 +1914,12 @@ void handleFirmwareUpload() {
       Update.printError(Serial);
     }
   } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (!firmwareUploadAuthorized) return;
     if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
       Update.printError(Serial);
     }
   } else if (upload.status == UPLOAD_FILE_END) {
+    if (!firmwareUploadAuthorized) return;
     if (Update.end(true)) {
       Serial.printf("Update abgeschlossen: %u Bytes\n", upload.totalSize);
       firmwareUpdateSuccess = true;
@@ -1805,6 +2055,13 @@ void setupPreferences() {
   konstanteFeuchteAktiv = prefs.getBool("feuchte_regelung", false);
   zielFeuchteInnen = prefs.getFloat("ziel_rh", 45.0);
   hysterese = prefs.getFloat("hysterese", 2.0);
+  // Webinterface-Zugangsdaten: falls schon mal über die Einstellungen geändert,
+  // überschreiben die gespeicherten Werte die Defaults (secrets.h bzw. "admin").
+  // toCharArray() terminiert im Gegensatz zu strncpy() immer korrekt mit \0.
+  String webUser = prefs.getString("web_user", configUsername);
+  webUser.toCharArray(configUsername, sizeof(configUsername));
+  String webPass = prefs.getString("web_pass", configPassword);
+  webPass.toCharArray(configPassword, sizeof(configPassword));
   prefs.end();
   t2_letzterEintrag = millis();
   t3_letzterEintrag = millis();
@@ -1841,26 +2098,30 @@ void setupMQTT() {
 void setupWebServer() {
   configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org");
 
-  server.on("/", handleRoot);
-  server.on("/tempschutz", HTTP_POST, handleTempSchutz);
-  server.on("/austrocknungsschutz", HTTP_POST, handleAustrocknungsschutz);
-  server.on("/feuchteregelung", HTTP_POST, handleFeuchteregelung);
-  server.on("/setSchwelle", HTTP_POST, handleSetSchwelle);
-  server.on("/timer", HTTP_POST, handleTimerSettings);
-  server.on("/mqttconfig", HTTP_POST, handleMQTTConfig);
-  server.on("/mqtttopics", HTTP_POST, handleMQTTTopics);
-  server.on("/setMQTT", handleSetMQTT);
-  server.on("/setModus", handleSetModus);
-  server.on("/reboot", HTTP_POST, handleReboot);
-  server.on("/chartdata", handleChartData);
-  server.on("/livedata", handleLiveData);
+  // Alle Routen außer /style.css laufen jetzt über requireAuth() (HTTP-Basic-Auth).
+  // /style.css bleibt bewusst offen: enthält keine sensiblen Daten, nur Optik,
+  // und so bleibt zumindest das grobe Layout sichtbar, bevor man sich einloggt.
+  server.on("/", []() { if (requireAuth()) handleRoot(); });
+  server.on("/tempschutz", HTTP_POST, []() { if (requireAuth()) handleTempSchutz(); });
+  server.on("/austrocknungsschutz", HTTP_POST, []() { if (requireAuth()) handleAustrocknungsschutz(); });
+  server.on("/feuchteregelung", HTTP_POST, []() { if (requireAuth()) handleFeuchteregelung(); });
+  server.on("/setSchwelle", HTTP_POST, []() { if (requireAuth()) handleSetSchwelle(); });
+  server.on("/timer", HTTP_POST, []() { if (requireAuth()) handleTimerSettings(); });
+  server.on("/mqttconfig", HTTP_POST, []() { if (requireAuth()) handleMQTTConfig(); });
+  server.on("/mqtttopics", HTTP_POST, []() { if (requireAuth()) handleMQTTTopics(); });
+  server.on("/setMQTT", []() { if (requireAuth()) handleSetMQTT(); });
+  server.on("/setModus", []() { if (requireAuth()) handleSetModus(); });
+  server.on("/reboot", HTTP_POST, []() { if (requireAuth()) handleReboot(); });
+  server.on("/chartdata", []() { if (requireAuth()) handleChartData(); });
+  server.on("/livedata", []() { if (requireAuth()) handleLiveData(); });
   server.on("/style.css", handleCSS);
-  server.on("/mqttdiscovery", HTTP_POST, handleMQTTDiscovery);
+  server.on("/mqttdiscovery", HTTP_POST, []() { if (requireAuth()) handleMQTTDiscovery(); });
   server.on("/mqttdiscoveryprefix", HTTP_POST, []() {
+    if (!requireAuth()) return;
     if (server.hasArg("mqtt_discovery_prefix")) {
       mqttDiscoveryPrefix = server.arg("mqtt_discovery_prefix");
       if (!mqttDiscoveryPrefix.endsWith("/")) mqttDiscoveryPrefix += "/";
-      
+
       prefs.begin("config", false);
       prefs.putString("mqtt_discovery_prefix", mqttDiscoveryPrefix);
       prefs.end();
@@ -1873,6 +2134,7 @@ void setupWebServer() {
     }
   });
   server.on("/rediscovery", []() {
+    if (!requireAuth()) return;
     if (mqttClient.connected()) {
       publishMQTTDiscovery();
       mqttClient.publish("homeassistant/status", "online", true);
@@ -1881,9 +2143,12 @@ void setupWebServer() {
       server.send(500, "text/plain", "MQTT nicht verbunden.");
     }
   });
-  server.on("/hostname", HTTP_POST, handleHostnameUpdate);
-  server.on("/firmwarebackup", HTTP_GET, handleFirmwareBackup);
+  server.on("/hostname", HTTP_POST, []() { if (requireAuth()) handleHostnameUpdate(); });
+  server.on("/setUsername", HTTP_POST, []() { if (requireAuth()) handleSetUsername(); });
+  server.on("/setPassword", HTTP_POST, []() { if (requireAuth()) handleSetPassword(); });
+  server.on("/firmwarebackup", HTTP_GET, []() { if (requireAuth()) handleFirmwareBackup(); });
   server.on("/update", HTTP_POST, []() {
+  if (!requireAuth()) return; // Upload-Handler (3. Argument unten) prüft den Header separat vor Update.begin()
   server.sendHeader("Connection", "close");
 
   if (firmwareUpdateSuccess) {
