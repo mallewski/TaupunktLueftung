@@ -28,7 +28,7 @@ bool debugMQTT = false; // Debug für MQTT Discovery
 #define NAME "TaupunktLueftung"
 #define DEFAULT_HOSTNAME "TaupunktLueftung"
 String hostname = DEFAULT_HOSTNAME;
-#define FIRMWARE_VERSION "v3.8.7"
+#define FIRMWARE_VERSION "v3.9"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
