@@ -1,4 +1,3 @@
-
 #include <Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -29,7 +28,7 @@ bool debugMQTT = false; // Debug für MQTT Discovery
 #define NAME "TaupunktLueftung"
 #define DEFAULT_HOSTNAME "TaupunktLueftung"
 String hostname = DEFAULT_HOSTNAME;
-#define FIRMWARE_VERSION "v3.8"
+#define FIRMWARE_VERSION "v3.7"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
@@ -1770,6 +1769,8 @@ void setupWiFi() {
 
 //Setup Sensoren
 void setupSensoren() {
+  Wire.begin();
+  Wire.setTimeOut(100); // verhindert unbegrenztes Blockieren des loop() bei I2C-Bushängern
   pinMode(RELAY_LED_PIN, OUTPUT);
   pinMode(STATUS_GREEN_PIN, OUTPUT);
   pinMode(STATUS_RED_PIN, OUTPUT);
@@ -1777,8 +1778,11 @@ void setupSensoren() {
   setLEDs(false, false, false);
 
   shtInnen.begin(0x44);
-  shtAussen.begin(0x45);
-  dht.begin();
+  if (sensorTypAussen == "sht31") {
+    shtAussen.begin(0x45);
+  } else {
+    dht.begin();
+  }
 }
 //setup Preferences
 void setupPreferences() {
@@ -1786,8 +1790,10 @@ void setupPreferences() {
   taupunktDifferenzSchwellwert = prefs.getFloat("schwelle", 4.0);
   mindestLaufzeit_ms = prefs.getUInt("min_laufzeit", 2) * 60 * 1000;
   mindestPause_ms = prefs.getUInt("min_pause", 5) * 60 * 1000;
-  letzteAktivierung = millis() - mindestLaufzeit_ms;
-  letzteDeaktivierung = millis() - mindestPause_ms;
+  letzteAktivierung = millis();     // konservativ: verhindert sofortiges Ausschalten-Dürfen nach Neustart
+  letzteDeaktivierung = millis();   // konservativ: volle Mindestpause muss nach JEDEM Neustart erst ablaufen,
+                                     // bevor die Lüftung wieder einschalten darf (schützt bei Reboot-Loops
+                                     // durch z.B. Spannungseinbrüche beim Relaisschalten)
   modus_innen = prefs.getString("modus_innen", "hardware");
   modus_aussen = prefs.getString("modus_aussen", "hardware");
   sensorTypAussen = prefs.getString("sensor_typ_aussen", "dht22");
@@ -1933,8 +1939,8 @@ void setup() {
   #endif
 
   setupWiFi();
-  setupSensoren();
   setupPreferences();
+  setupSensoren();
   setupMQTT();
   setupWebServer();
 
