@@ -28,7 +28,7 @@ bool debugMQTT = false; // Debug für MQTT Discovery
 #define NAME "TaupunktLueftung"
 #define DEFAULT_HOSTNAME "TaupunktLueftung"
 String hostname = DEFAULT_HOSTNAME;
-#define FIRMWARE_VERSION "v4.0"
+#define FIRMWARE_VERSION "v4.1"
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
@@ -1788,8 +1788,13 @@ void handleTimerSettings() {
   }
 
   prefs.begin("config", false);
-  prefs.putULong("min_on", mindestLaufzeit_ms / 60000);
-  prefs.putULong("min_off", mindestPause_ms / 60000);
+  // Vorher: Schlüssel "min_on"/"min_off" per putULong() geschrieben, aber
+  // beim Start als "min_laufzeit"/"min_pause" per getUInt() gelesen (siehe
+  // setupPreferences()) - passte weder Name noch Typ zusammen, wodurch der
+  // gespeicherte Wert nie gefunden wurde und nach jedem Neustart wieder auf
+  // die Werkswerte (2/5 Minuten) zurückfiel. Jetzt Name UND Typ angeglichen.
+  prefs.putUInt("min_laufzeit", mindestLaufzeit_ms / 60000);
+  prefs.putUInt("min_pause", mindestPause_ms / 60000);
   prefs.end();
 
   redirectToSettings();
@@ -2090,8 +2095,33 @@ void setupSensoren() {
 void setupPreferences() {
   prefs.begin("config", true);
   taupunktDifferenzSchwellwert = prefs.getFloat("schwelle", 4.0);
-  mindestLaufzeit_ms = prefs.getUInt("min_laufzeit", 2) * 60 * 1000;
-  mindestPause_ms = prefs.getUInt("min_pause", 5) * 60 * 1000;
+
+  // Migration: bis einschließlich v4.0 schrieb handleTimerSettings() die
+  // Schutzzeiten unter "min_on"/"min_off" (und als ULong), gelesen wurde
+  // aber immer schon "min_laufzeit"/"min_pause" (als UInt) - Name UND Typ
+  // passten nicht zusammen, ein gespeicherter Wert wurde nie gefunden und
+  // fiel nach jedem Neustart auf die Werkswerte zurück. handleTimerSettings()
+  // schreibt ab jetzt korrekt unter den hier gelesenen Schlüsseln; hier noch
+  // einmalig alte, unter dem falschen Schlüssel vorhandene Werte übernehmen,
+  // damit individuell angepasste Zeiten beim Update nicht verloren gehen.
+  bool hatNeueSchluessel = prefs.isKey("min_laufzeit");
+  bool hatAlteSchluessel = prefs.isKey("min_on") && prefs.isKey("min_off");
+  unsigned long altLaufzeit = prefs.getULong("min_on", 2);
+  unsigned long altPause = prefs.getULong("min_off", 5);
+
+  mindestLaufzeit_ms = prefs.getUInt("min_laufzeit", hatAlteSchluessel ? altLaufzeit : 2) * 60 * 1000;
+  mindestPause_ms = prefs.getUInt("min_pause", hatAlteSchluessel ? altPause : 5) * 60 * 1000;
+  prefs.end();
+
+  if (!hatNeueSchluessel && hatAlteSchluessel) {
+    prefs.begin("config", false);
+    prefs.putUInt("min_laufzeit", mindestLaufzeit_ms / 60000);
+    prefs.putUInt("min_pause", mindestPause_ms / 60000);
+    prefs.end();
+    logEvent("Lüfter-/Relais-Schutzzeiten aus altem Speicherformat migriert (min_on/min_off -> min_laufzeit/min_pause)");
+  }
+
+  prefs.begin("config", true);
   letzteAktivierung = millis();     // konservativ: verhindert sofortiges Ausschalten-Dürfen nach Neustart
   letzteDeaktivierung = millis();   // konservativ: volle Mindestpause muss nach JEDEM Neustart erst ablaufen,
                                      // bevor die Lüftung wieder einschalten darf (schützt bei Reboot-Loops
