@@ -781,6 +781,22 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
       let chart, chart_humidity, chart_status;
       let chartInitialized = false;
 
+      function getIntervalInSeconds(tier) {
+        if (tier === '1') return 5;    // Tier 1: 5 Sekunden
+        if (tier === '2') return 60;   // Tier 2: 1 Minute
+        if (tier === '3') return 3600; // Tier 3: 1 Stunde
+        return 1;
+      }
+      function formatTime(date, tier) {
+        if (tier === '3') {
+          return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}. ${String(date.getHours()).padStart(2, '0')}:00`;
+        } else if (tier === '2') {
+          return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+        } else {
+          return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
+        }
+      }
+
       async function updateChart() {
         try {
           const [rangeStr, tier] = document.getElementById('rangeSelector').value.split('|');
@@ -788,15 +804,22 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
           const r = await fetch('/chartdata?tier=' + tier);
           const d = await r.json();
 
-          let recent;
-          if (tier === '1') {
-            const totalPoints = Math.floor(range * (3600 / 5));
-            recent = d.slice(-totalPoints);
-          } else {
-            recent = d;
-          }
+          // Generisches Slicing für ALLE Tiers (vorher nur für Tier 1): ohne das
+          // wurde "range" bei Tier 2/3 ignoriert (recent = d), wodurch "7 Tage"
+          // und "30 Tage" identisch den kompletten 30-Tage-Puffer zeigten, weil
+          // beide Optionen intern Tier 3 verwenden.
+          const pointsPerHour = 3600 / getIntervalInSeconds(tier);
+          const totalPoints = Math.floor(range * pointsPerHour);
+          const recent = d.slice(-totalPoints);
 
-          const l = recent.map((_, i) => i);
+          // Echte Zeitstempel für die X-Achse (Näherung anhand der lokalen
+          // Uhrzeit: der letzte Punkt = "jetzt", die anderen entsprechend älter)
+          const now = new Date();
+          const l = recent.map((_, i) => {
+            const secondsAgo = (recent.length - 1 - i) * getIntervalInSeconds(tier);
+            const timestamp = new Date(now.getTime() - secondsAgo * 1000);
+            return formatTime(timestamp, tier);
+          });
           const tdIn = recent.map(p => p.td_in);
           const tdOut = recent.map(p => p.td_out);
           const diff = recent.map(p => p.diff);
@@ -822,7 +845,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                 responsive: true,
                 plugins: { legend: { labels: { usePointStyle: true, pointStyle: 'line', color: cc.text } } },
                 scales: {
-                  x: { ticks: { color: cc.text }, grid: { color: cc.grid } },
+                  x: { ticks: { color: cc.text, maxRotation: 45, minRotation: 30, autoSkip: true, maxTicksLimit: 10 }, grid: { color: cc.grid } },
                   y: { ticks: { color: cc.text }, grid: { color: cc.grid } }
                 }
               }
@@ -841,7 +864,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                 responsive: true,
                 plugins: { legend: { labels: { usePointStyle: true, pointStyle: 'line', color: cc.text } } },
                 scales: {
-                  x: { ticks: { color: cc.text }, grid: { color: cc.grid } },
+                  x: { ticks: { color: cc.text, maxRotation: 45, minRotation: 30, autoSkip: true, maxTicksLimit: 10 }, grid: { color: cc.grid } },
                   y: { ticks: { color: cc.text }, grid: { color: cc.grid } }
                 }
               }
@@ -857,7 +880,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                 responsive: true,
                 plugins: { legend: { labels: { color: cc.text } } },
                 scales: {
-                  x: { ticks: { color: cc.text }, grid: { color: cc.grid } },
+                  x: { ticks: { color: cc.text, maxRotation: 45, minRotation: 30, autoSkip: true, maxTicksLimit: 10 }, grid: { color: cc.grid } },
                   y: { beginAtZero: true, max: 1, ticks: { color: cc.text }, grid: { color: cc.grid } }
                 }
               }
@@ -871,17 +894,17 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
             chart.data.datasets[2].data = diff;
             chart.data.datasets[3].data = Array(l.length).fill(SCHWELLWERT);
             chart.data.datasets[4].data = Array(l.length).fill(-SCHWELLWERT);
-            chart.update();
+            chart.update('none');
 
             chart_humidity.data.labels = l;
             chart_humidity.data.datasets[0].data = rhIn;
             chart_humidity.data.datasets[1].data = rhOut;
-            chart_humidity.update();
+            chart_humidity.update('none');
 
             chart_status.data.labels = l;
             chart_status.data.datasets[0].data = status;
             chart_status.data.datasets[0].backgroundColor = status.map(s => s === 1 ? COLOR_STATUS_ON : COLOR_STATUS_OFF);
-            chart_status.update();
+            chart_status.update('none');
           }
         } catch (e) {
           console.error("Chart-Update-Fehler:", e);
