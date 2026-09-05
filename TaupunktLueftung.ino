@@ -40,13 +40,16 @@ bool firmwareUpdateSuccess = false;
 bool mqttAktivVorUpdate = false;
 bool firmwareUploadAuthorized = false; // wird pro Upload-Request in UPLOAD_FILE_START gesetzt
 
-//Umschaltung zwischen DHT22 (Pin17) und SHT31 für Sensor Außen (zur Laufzeit im Webinterface wählbar)
+//Umschaltung zwischen DHT22 (Pin17) und SHT31 für Sensor Außen
+#define SENSOR_TYP_AUSSEN_SHT31  // auskommentieren für DHT22
+#ifdef SENSOR_TYP_AUSSEN_SHT31
+Adafruit_SHT31 shtAussen = Adafruit_SHT31();
+#else
 #include <DHT.h>
 #define DHTPIN 17
 #define DHTTYPE DHT22
 DHT dht(DHTPIN, DHTTYPE);
-Adafruit_SHT31 shtAussen = Adafruit_SHT31();
-String sensorTypAussen = "dht22"; // "dht22" oder "sht31" – wird aus Preferences geladen, Default entspricht bisherigem Verhalten
+#endif
 
 Preferences prefs;
 WebServer server(80);
@@ -279,11 +282,12 @@ void aktualisiereSensoren() {
     }
   }
 
-  // Außen
+#ifdef SENSOR_TYP_AUSSEN_SHT31
+  // Außen – SHT31
   if (modus_aussen == "mqtt" && mqttAktiv) {
     t_out = mqtt_t_out;
     rh_out = mqtt_rh_out;
-  } else if (sensorTypAussen == "sht31") {
+  } else {
     t_out = shtAussen.readTemperature();
     rh_out = shtAussen.readHumidity();
 
@@ -298,7 +302,13 @@ void aktualisiereSensoren() {
         Serial.println("SHT31 außen Re-Init fehlgeschlagen.");
       }
     }
-  } else { // dht22
+  }
+#else
+  // Außen – DHT22
+  if (modus_aussen == "mqtt" && mqttAktiv) {
+    t_out = mqtt_t_out;
+    rh_out = mqtt_rh_out;
+  } else {
     t_out = dht.readTemperature();
     rh_out = dht.readHumidity();
 
@@ -317,6 +327,7 @@ void aktualisiereSensoren() {
       }
     }
   }
+#endif
 
   // Fehlerstatus getrennt prüfen
   sensorFehlerInnen = isnan(t_in) || isnan(rh_in);
@@ -343,15 +354,10 @@ void steuerlogik() {
   unsigned long jetzt = millis();
 
   // === 0. Fail-Safe bei Sensorausfall ===
-  // Vorher: bei NaN wurde hier einfach "return" gemacht - das Relais blieb
-  // dabei in seinem letzten Zustand stehen. War die Lüftung gerade aktiv,
-  // lief sie bei einem dauerhaften Sensordefekt unbegrenzt weiter (keine
-  // Historie, kein Status-Update, kein automatisches Abschalten).
   if (isnan(td_in) || isnan(td_out) || isnan(rh_in) || isnan(t_in)) {
     if (sensorFehlerSeit == 0) sensorFehlerSeit = jetzt;
 
     if (jetzt - sensorFehlerSeit >= SENSOR_FAILSAFE_MS) {
-      // Fehler hält schon länger an -> sicherer Zustand erzwingen
       if (lueftungAktiv) {
         digitalWrite(RELAY_LED_PIN, LOW);
         lueftungAktiv = false;
@@ -360,17 +366,14 @@ void steuerlogik() {
       }
       statusText = "Sensorfehler - Lüftung aus (Fail-Safe)";
     } else {
-      // Kurze Gnadenfrist: evtl. nur ein einzelner Lesefehler/I2C-Aussetzer
       statusText = "Sensorfehler - warte auf Fail-Safe-Abschaltung";
     }
 
-    // Weiterhin Historie/MQTT aktualisieren, damit der Fehler sichtbar bleibt
-    // und keine Datenlücke ohne Erklärung im Chart entsteht.
     historieAktualisieren();
     publishAllStates();
     return;
   }
-  sensorFehlerSeit = 0; // Sensoren wieder ok -> Fail-Safe-Timer zurücksetzen
+  sensorFehlerSeit = 0;
 
   float diff = td_in - td_out;
 
@@ -410,7 +413,6 @@ void steuerlogik() {
     float rhSoll_max = zielFeuchteInnen + hysterese;
 
     if (rh_in < rhSoll_min && td_out > td_in + 1.0) {
-      // Außenluft hat höheren Taupunkt – Befeuchten sinnvoll
       digitalWrite(RELAY_LED_PIN, HIGH);
       if (!lueftungAktiv) {
         letzteAktivierung = jetzt;
@@ -421,7 +423,6 @@ void steuerlogik() {
       statusText = "Regelung: Befeuchten (Lüftung AN)";
     } 
     else if (rh_in > rhSoll_max && td_out < td_in - 1.0) {
-      // Außenluft ist deutlich trockener – Entfeuchtung sinnvoll
       digitalWrite(RELAY_LED_PIN, HIGH);
       if (!lueftungAktiv) {
         letzteAktivierung = jetzt;
@@ -442,7 +443,6 @@ void steuerlogik() {
       statusText = "Regelung: RH im Zielbereich – Lüftung AUS";
     }
 
-    // Historie aktualisieren
     historieAktualisieren();
     publishAllStates();
     return;
@@ -482,7 +482,6 @@ void steuerlogik() {
     statusText = "Neutral – Lüftung aus";
   }
 
-  // Historie aktualisieren
   historieAktualisieren();
   publishAllStates();
 }
@@ -504,29 +503,22 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 void publishAllStates() {
   if (!mqttAktiv || !mqttClient.connected()) return;
 
-  // Innen
   mqttClient.publish((mqttPublishPrefix + "temp_innen").c_str(), String(t_in, 1).c_str(), true);
   mqttClient.publish((mqttPublishPrefix + "hygro_innen").c_str(), String(rh_in, 1).c_str(), true);
   mqttClient.publish((mqttPublishPrefix + "taupunkt_innen").c_str(), String(td_in, 1).c_str(), true);
 
-  // Außen
   mqttClient.publish((mqttPublishPrefix + "temp_aussen").c_str(), String(t_out, 1).c_str(), true);
   mqttClient.publish((mqttPublishPrefix + "hygro_aussen").c_str(), String(rh_out, 1).c_str(), true);
   mqttClient.publish((mqttPublishPrefix + "taupunkt_aussen").c_str(), String(td_out, 1).c_str(), true);
 
-  // Differenz
   mqttClient.publish((mqttPublishPrefix + "diff").c_str(), String(td_in - td_out, 1).c_str(), true);
 
-  // Lüftung an/aus
   mqttClient.publish((mqttPublishPrefix + "status").c_str(), lueftungAktiv ? "1" : "0", true);
 
-  // Availability (optional bei reconnect)
   mqttClient.publish((mqttPublishPrefix + "availability").c_str(), "online", true);
 
-  //Sensorfehler
   mqttClient.publish((mqttPublishPrefix + "fehler_innen").c_str(), sensorFehlerInnen ? "1" : "0", true);
   mqttClient.publish((mqttPublishPrefix + "fehler_aussen").c_str(), sensorFehlerAussen ? "1" : "0", true);
-
 }
 
 void publishMQTTDiscovery() {
@@ -539,25 +531,20 @@ void publishMQTTDiscovery() {
     String unit;
     String devclass;
     String topic;
-    bool binary; // true für binary_sensor
+    bool binary;
   };
 
   Sensor sensoren[] = {
     {"tin", "Temperatur Innen", "°C", "temperature", mqttPublishPrefix + "temp_innen", false},
     {"hin", "Luftfeuchte Innen", "%", "humidity", mqttPublishPrefix + "hygro_innen", false},
     {"tdin", "Taupunkt Innen", "°C", "temperature", mqttPublishPrefix + "taupunkt_innen", false},
-
     {"tout", "Temperatur Außen", "°C", "temperature", mqttPublishPrefix + "temp_aussen", false},
     {"hout", "Luftfeuchte Außen", "%", "humidity", mqttPublishPrefix + "hygro_aussen", false},
-    {"tdout", "Taupunkt Außen", "°C", "temperature", mqttPublishPrefix + "taupunkt_aussen", false}, // ggf. anpassen
-
+    {"tdout", "Taupunkt Außen", "°C", "temperature", mqttPublishPrefix + "taupunkt_aussen", false},
     {"diff", "Taupunkt-Differenz", "°C", "temperature", mqttPublishPrefix + "diff", false},
-    
     {"lueftung", "Lüftung aktiv", "", "", mqttPublishPrefix + "status", true},
-
     {"fehler_innen", "Sensorfehler Innen", "", "", mqttPublishPrefix + "fehler_innen", true},
     {"fehler_aussen", "Sensorfehler Außen", "", "", mqttPublishPrefix + "fehler_aussen", true}
-
   };
 
   for (Sensor s : sensoren) {
@@ -583,7 +570,7 @@ void publishMQTTDiscovery() {
     if (debugMQTT) {
       Serial.println("Sende Discovery an Topic: " + configTopic);
       Serial.println("Payload: " + payload);
-      Serial.println(ok ? "✔️ Publish erfolgreich" : "Publish FEHLGESCHLAGEN");
+      Serial.println(ok ? "Publish erfolgreich" : "Publish FEHLGESCHLAGEN");
     }
   }
   if (debugMQTT) {
@@ -701,7 +688,7 @@ void handleChartData() {
   }
 
   server.sendContent("]");
-  server.sendContent(""); // beendet die Chunked-Übertragung
+  server.sendContent("");
 }
 
 void handleLiveData() {
@@ -739,7 +726,7 @@ void handleLiveData() {
   json += "\"zeit\":\"" + sichereUhrzeit + "\",";
   json += "\"status\":\"" + sichererStatus + "\",";
   json += "\"timer\":\"" + timerInfo + "\",";
-  json += "\"schwelle\":" + String(taupunktDifferenzSchwellwert, 1); // ersetzt das frühere %SCHWELLE%-Replace im JS
+  json += "\"schwelle\":" + String(taupunktDifferenzSchwellwert, 1);
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -758,31 +745,32 @@ void redirectToSettings() {
 void handleReboot() {
   server.send(200, "text/plain", "Neustart wird durchgeführt...");
   logEvent("Neustart über Weboberfläche ausgelöst");
-  delay(500);          // Zeit für die Antwort, damit der Browser sie noch bekommt
+  delay(500);
   ESP.restart();
 }
 
 void handleWifiReset() {
   server.send(200, "text/plain", "WLAN-Zugangsdaten werden gelöscht, Gerät startet neu...");
   logEvent("WLAN-Reset über Weboberfläche ausgelöst");
-  delay(500); // Zeit für die Antwort, damit der Browser sie noch bekommt
+  delay(500);
 
   WiFiManager wm;
-  wm.resetSettings(); // löscht NUR die von WiFiManager gespeicherten WLAN-Zugangsdaten,
-                       // alle eigenen Preferences (Schwellwerte, MQTT, Login, ...) bleiben erhalten
-  ESP.restart();       // startet danach automatisch den Setup-AP "TaupunktLueftung-Setup",
-                        // da wm.autoConnect() keine gespeicherten Zugangsdaten mehr findet
+  wm.resetSettings();
+  ESP.restart();
+}
+
+bool requireAuth() {
+  if (!server.authenticate(configUsername, configPassword)) {
+    server.requestAuthentication(BASIC_AUTH, "TaupunktLueftung");
+    return false;
+  }
+  return true;
 }
 
 // --- Dashboard --->
-//JS-Script (komplett statisch -> liegt im Flash (PROGMEM), landet nie als String im RAM)
 const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
     <script src='https://cdn.jsdelivr.net/npm/chart.js'></script>
     <script>
-      // ===== Globale Konstanten =====
-      // Kein Server-seitiges Replace mehr nötig: der Wert kommt laufend aus
-      // /livedata (siehe updateLiveData) - dadurch kann dieses Script komplett
-      // statisch aus dem Flash gestreamt werden.
       let SCHWELLWERT = 4.0;
       const COLOR_TD_IN = 'green';
       const COLOR_TD_OUT = 'blue';
@@ -791,25 +779,6 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
       const COLOR_STATUS_ON = 'rgba(0,200,0,0.6)';
       const COLOR_STATUS_OFF = 'rgba(0,0,0,0)';
       let chart, chart_humidity, chart_status;
-
-      // ===== Hilfsfunktionen für die Zeitformatierung =====
-      function getIntervalInSeconds(tier) {
-        if (tier === '1') return 5;    // Tier 1: 5 Sekunden
-        if (tier === '2') return 60;   // Tier 2: 1 Minute
-        if (tier === '3') return 3600; // Tier 3: 1 Stunde
-        return 1;
-      }
-      function formatTime(date, tier) {
-        if (tier === '3') {
-          return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}. ${String(date.getHours()).padStart(2, '0')}:00`;
-        } else if (tier === '2') {
-          return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-        } else {
-          return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
-        }
-      }
-
-      // ===== Chart-Updates =====
       let chartInitialized = false;
 
       async function updateChart() {
@@ -819,22 +788,15 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
           const r = await fetch('/chartdata?tier=' + tier);
           const d = await r.json();
 
-          // Generisches Slicing für ALLE Tiers (vorher nur für Tier 1): ohne das
-          // wurde "range" bei Tier 2/3 komplett ignoriert ("recent = d"), wodurch
-          // "7 Tage" und "30 Tage" identisch den kompletten 30-Tage-Puffer zeigten,
-          // weil beide Optionen Tier 3 verwenden.
-          const pointsPerHour = 3600 / getIntervalInSeconds(tier);
-          const totalPoints = Math.floor(range * pointsPerHour);
-          const recent = d.slice(-totalPoints);
+          let recent;
+          if (tier === '1') {
+            const totalPoints = Math.floor(range * (3600 / 5));
+            recent = d.slice(-totalPoints);
+          } else {
+            recent = d;
+          }
 
-          // Zeitstempel für die X-Achse generieren (Näherung anhand der lokalen
-          // Uhrzeit: der letzte Punkt = "jetzt", die anderen entsprechend älter)
-          const now = new Date();
-          const labels = recent.map((_, i) => {
-            const secondsAgo = (recent.length - 1 - i) * getIntervalInSeconds(tier);
-            const timestamp = new Date(now.getTime() - secondsAgo * 1000);
-            return formatTime(timestamp, tier);
-          });
+          const l = recent.map((_, i) => i);
           const tdIn = recent.map(p => p.td_in);
           const tdOut = recent.map(p => p.td_out);
           const diff = recent.map(p => p.diff);
@@ -843,42 +805,33 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
           const status = recent.map(p => p.status);
 
           if (!chartInitialized) {
-            // Taupunkt-Chart
+            const cc = chartColors();
             chart = new Chart(document.getElementById('chart'), {
               type: 'line',
               data: {
-                labels: labels,
+                labels: l,
                 datasets: [
                   { label: 'Taupunkt Innen', data: tdIn, borderColor: COLOR_TD_IN, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0},
                   { label: 'Taupunkt Außen', data: tdOut, borderColor: COLOR_TD_OUT, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0},
                   { label: 'Differenz', data: diff, borderColor: COLOR_DIFF, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0},
-                  { label: 'Schwellwert +', data: Array(labels.length).fill(SCHWELLWERT), borderDash: [5, 5], borderColor: COLOR_SCHWELL, borderWidth: 1, fill: false, pointStyle: 'circle', pointRadius: 0},
-                  { label: 'Schwellwert -', data: Array(labels.length).fill(-SCHWELLWERT), borderDash: [5, 5], borderColor: COLOR_SCHWELL, borderWidth: 1, fill: false, pointStyle: 'circle', pointRadius: 0}
+                  { label: 'Schwellwert +', data: Array(l.length).fill(SCHWELLWERT), borderDash: [5, 5], borderColor: COLOR_SCHWELL, borderWidth: 1, fill: false, pointStyle: 'circle', pointRadius: 0},
+                  { label: 'Schwellwert -', data: Array(l.length).fill(-SCHWELLWERT), borderDash: [5, 5], borderColor: COLOR_SCHWELL, borderWidth: 1, fill: false, pointStyle: 'circle', pointRadius: 0}
                 ]
               },
               options: {
                 responsive: true,
+                plugins: { legend: { labels: { usePointStyle: true, pointStyle: 'line', color: cc.text } } },
                 scales: {
-                  x: {
-                    ticks: { maxRotation: 45, minRotation: 30, autoSkip: true, maxTicksLimit: 10 }
-                  }
-                },
-                plugins: {
-                  legend: {
-                    labels: {
-                      usePointStyle: true,
-                      pointStyle: 'line'
-                    }
-                  }
+                  x: { ticks: { color: cc.text }, grid: { color: cc.grid } },
+                  y: { ticks: { color: cc.text }, grid: { color: cc.grid } }
                 }
               }
             });
 
-            // Feuchte-Chart
             chart_humidity = new Chart(document.getElementById('chart_humidity'), {
               type: 'line',
               data: {
-                labels: labels,
+                labels: l,
                 datasets: [
                   { label: 'RH Innen', data: rhIn, borderColor: 'teal', borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0},
                   { label: 'RH Außen', data: rhOut, borderColor: 'purple', borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0}
@@ -886,86 +839,59 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
               },
               options: {
                 responsive: true,
+                plugins: { legend: { labels: { usePointStyle: true, pointStyle: 'line', color: cc.text } } },
                 scales: {
-                  x: {
-                    ticks: { maxRotation: 45, minRotation: 30, autoSkip: true, maxTicksLimit: 10 }
-                  }
-                },
-                plugins: {
-                  legend: {
-                    labels: {
-                      usePointStyle: true,
-                      pointStyle: 'line'
-                    }
-                  }
+                  x: { ticks: { color: cc.text }, grid: { color: cc.grid } },
+                  y: { ticks: { color: cc.text }, grid: { color: cc.grid } }
                 }
               }
             });
 
-            // Status-Balken
             chart_status = new Chart(document.getElementById('chart_status'), {
               type: 'bar',
               data: {
-                labels: labels,
-                datasets: [{
-                  label: 'Lüftung',
-                  data: status,
-                  backgroundColor: status.map(s => s === 1 ? COLOR_STATUS_ON : COLOR_STATUS_OFF)
-                }]
+                labels: l,
+                datasets: [{ label: 'Lüftung', data: status, backgroundColor: status.map(s => s === 1 ? COLOR_STATUS_ON : COLOR_STATUS_OFF) }]
               },
               options: {
                 responsive: true,
+                plugins: { legend: { labels: { color: cc.text } } },
                 scales: {
-                  x: {
-                    ticks: { maxRotation: 45, minRotation: 30, autoSkip: true, maxTicksLimit: 10 }
-                  },
-                  y: {
-                    beginAtZero: true,
-                    max: 1,
-                    ticks: {
-                      stepSize: 1,
-                      callback: function(value) {
-                        return value === 1 ? 'AN' : 'AUS';
-                      }
-                    }
-                  }
+                  x: { ticks: { color: cc.text }, grid: { color: cc.grid } },
+                  y: { beginAtZero: true, max: 1, ticks: { color: cc.text }, grid: { color: cc.grid } }
                 }
               }
             });
 
             chartInitialized = true;
-
           } else {
-            chart.data.labels = labels;
+            chart.data.labels = l;
             chart.data.datasets[0].data = tdIn;
             chart.data.datasets[1].data = tdOut;
             chart.data.datasets[2].data = diff;
-            chart.data.datasets[3].data = Array(labels.length).fill(SCHWELLWERT);
-            chart.data.datasets[4].data = Array(labels.length).fill(-SCHWELLWERT);
-            chart.update('none');
+            chart.data.datasets[3].data = Array(l.length).fill(SCHWELLWERT);
+            chart.data.datasets[4].data = Array(l.length).fill(-SCHWELLWERT);
+            chart.update();
 
-            chart_humidity.data.labels = labels;
+            chart_humidity.data.labels = l;
             chart_humidity.data.datasets[0].data = rhIn;
             chart_humidity.data.datasets[1].data = rhOut;
-            chart_humidity.update('none');
+            chart_humidity.update();
 
-            chart_status.data.labels = labels;
+            chart_status.data.labels = l;
             chart_status.data.datasets[0].data = status;
             chart_status.data.datasets[0].backgroundColor = status.map(s => s === 1 ? COLOR_STATUS_ON : COLOR_STATUS_OFF);
-            chart_status.update('none');
+            chart_status.update();
           }
         } catch (e) {
           console.error("Chart-Update-Fehler:", e);
         }
       }
 
-      // ===== Live-Daten =====
       function updateElementValue(id, value, unit = "") {
         const el = document.getElementById(id);
         if (!el) return;
-
         const isValid = typeof value === "number" && !isNaN(value);
-
         if (isValid) {
           el.textContent = value.toFixed(1) + unit;
           el.style.color = "";
@@ -976,6 +902,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
           el.title = "Sensorwert ungültig oder nicht verfügbar";
         }
       }
+
       async function updateLiveData() {
         try {
           const res = await fetch('/livedata');
@@ -995,7 +922,56 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         }
       }
 
-      // ===== Tabs =====
+      function resolveTheme(t) {
+        if (t === 'system') {
+          return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        return t;
+      }
+
+      function chartColors() {
+        const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        return {
+          text: dark ? '#c9d1d9' : '#333333',
+          grid: dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)'
+        };
+      }
+
+      function applyChartTheme() {
+        const c = chartColors();
+        [chart, chart_humidity, chart_status].forEach(ch => {
+          if (!ch) return;
+          if (ch.options.plugins && ch.options.plugins.legend && ch.options.plugins.legend.labels) {
+            ch.options.plugins.legend.labels.color = c.text;
+          }
+          if (ch.options.scales) {
+            ['x', 'y'].forEach(axis => {
+              if (ch.options.scales[axis]) {
+                ch.options.scales[axis].ticks = Object.assign({}, ch.options.scales[axis].ticks, { color: c.text });
+                ch.options.scales[axis].grid = Object.assign({}, ch.options.scales[axis].grid, { color: c.grid });
+              }
+            });
+          }
+          ch.update();
+        });
+      }
+
+      function setTheme(t) {
+        localStorage.setItem('theme', t);
+        document.documentElement.setAttribute('data-theme', resolveTheme(t));
+        applyChartTheme();
+      }
+
+      // Wenn "System" gewählt ist und sich die Betriebssystem-Einstellung
+      // während der offenen Seite ändert, live nachziehen statt erst beim
+      // nächsten Laden.
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if ((localStorage.getItem('theme') || 'system') === 'system') {
+          document.documentElement.setAttribute('data-theme', resolveTheme('system'));
+          applyChartTheme();
+        }
+      });
+
       function showTab(tab) {
         document.getElementById('dashboardTab').classList.add('hidden');
         document.getElementById('settingsTab').classList.add('hidden');
@@ -1011,26 +987,21 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         }
       }
 
-      // ===== MQTT Umschalter =====
       function toggleMQTT(el) {
         const form = el.closest("form");
         const hidden = form.querySelector("input[name='mqtt']");
         const aktivieren = el.checked;
         hidden.value = aktivieren ? "MQTT aktivieren" : "MQTT deaktivieren";
 
-        // Sende AJAX-Request
         fetch('/setMQTT', {
           method: "POST",
           body: new URLSearchParams(new FormData(form))
         }).then(() => {
-          // UI sofort aktualisieren ohne Reload: Modus-Auswahl und komplettes
-          // MQTT-Fieldset ein-/ausblenden statt nur zu deaktivieren.
           document.getElementById('mqttModusFelder').classList.toggle('hidden', !aktivieren);
           document.getElementById('mqttFieldset').classList.toggle('hidden', !aktivieren);
         });
       }
 
-      // ===== Modal Logik =====
       function openFirmwareModalUI() {
         const modal = document.getElementById("firmwareModal");
         modal.classList.remove("hidden");
@@ -1055,9 +1026,9 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         if (e.key === "Escape") closeFirmwareModal();
       }
 
-	     function rebootDevice() {
+      function rebootDevice() {
         if (!confirm("Gerät wirklich neu starten? Die Verbindung geht kurz verloren.")) return;
-        fetch("/reboot", { method: "POST" }).catch(() => {}); // Antwort evtl. gar nicht mehr sauber ankommend
+        fetch("/reboot", { method: "POST" }).catch(() => {});
         document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
           "<h3>Neustart läuft…</h3><p>Seite lädt automatisch neu, sobald das Gerät wieder erreichbar ist.</p></div>";
         waitForReboot();
@@ -1066,22 +1037,18 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
       function waitForReboot() {
         setTimeout(() => {
           fetch("/livedata")
-            .then(() => location.reload())   // Gerät antwortet wieder -> reload
-            .catch(() => waitForReboot());   // noch nicht da -> weiter warten
+            .then(() => location.reload())
+            .catch(() => waitForReboot());
         }, 2000);
       }
 
       function wifiResetDevice() {
         if (!confirm("WLAN-Zugangsdaten wirklich löschen?\n\nDas Gerät startet neu und öffnet danach den Setup-Access-Point „TaupunktLueftung-Setup“. Alle anderen Einstellungen bleiben erhalten.")) return;
-        fetch("/wifireset", { method: "POST" }).catch(() => {}); // Antwort evtl. gar nicht mehr sauber ankommend
+        fetch("/wifireset", { method: "POST" }).catch(() => {});
         document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
           "<h3>WLAN-Reset läuft…</h3><p>Verbinde dich anschließend mit dem WLAN „TaupunktLueftung-Setup“, um ein neues Netz einzurichten.</p></div>";
       }
 
-      // ===== Zugang (Benutzername/Passwort) ändern =====
-      // Bewusst kein ajaxFormHandler() hier: der zeigt "Gespeichert!" unabhängig
-      // vom HTTP-Status an. Bei Login-Daten wollen wir echte Fehler
-      // (leer, Tippfehler bei der Bestätigung, zu lang) auch wirklich sehen.
       function submitBenutzernameForm(e) {
         e.preventDefault();
         const neu = document.getElementById('user_neu').value.trim();
@@ -1093,7 +1060,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         }).then(res => {
           if (res.ok) {
             alert("Benutzername geändert. Der Browser fragt jetzt neu nach den Zugangsdaten - dort den neuen Benutzernamen eingeben.");
-            location.reload(); // erzwingt sofort einen neuen Auth-Prompt statt stiller 401-Fehler im Hintergrund
+            location.reload();
           } else {
             res.text().then(msg => alert("Fehler: " + msg));
           }
@@ -1117,7 +1084,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         }).then(res => {
           if (res.ok) {
             alert("Passwort geändert. Der Browser fragt jetzt neu nach den Zugangsdaten - dort das neue Passwort eingeben.");
-            location.reload(); // erzwingt sofort einen neuen Auth-Prompt statt stiller 401-Fehler im Hintergrund
+            location.reload();
           } else {
             res.text().then(msg => alert("Fehler: " + msg));
           }
@@ -1137,7 +1104,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
       }
 
       function confirmFirmwareUpdate() {
-        const go = confirm("⚠️ Firmware-Update vorbereiten?\n\n- MQTT wird getrennt\n- Sensorlogik pausiert\n\nJetzt fortfahren?");
+        const go = confirm("Firmware-Update vorbereiten?\n\n- MQTT wird getrennt\n- Sensorlogik pausiert\n\nJetzt fortfahren?");
         if (go) {
           closeFirmwareModal();
           return true;
@@ -1145,59 +1112,15 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         return false;
       }
 
-      // ===== Firmware-Upload mit Wartesseite =====
-      // Vorher: normales <form>-POST -> der Browser navigiert weg und zeigt bis
-      // zur Antwort nur seinen eigenen (nichtssagenden) Lade-Indikator. Jetzt
-      // übernimmt fetch() den Upload, damit wir zwischen Klick und Ergebnis
-      // eine eigene "Verifiziere Firmware..."-Seite zeigen können.
-      function submitFirmwareUpdate(e) {
-        e.preventDefault();
-        if (!confirmFirmwareUpdate()) return false;
-
-        const formData = new FormData(document.getElementById('firmwareUploadForm'));
-
-        document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
-          "<h3>Firmware wird hochgeladen und verifiziert…</h3>" +
-          "<p>Bitte warten - je nach Dateigröße und WLAN-Geschwindigkeit kann das einen Moment dauern.<br>" +
-          "Bei Erfolg startet das Gerät automatisch neu.</p></div>";
-
-        fetch('/update', { method: "POST", body: formData })
-          .then(res => res.text().then(html => ({ ok: res.ok, html })))
-          .then(({ ok, html }) => {
-            if (ok) {
-              document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
-                "<h3>Firmware verifiziert, Update erfolgreich.</h3>" +
-                "<p>Neustart läuft… Seite lädt automatisch neu, sobald das Gerät wieder erreichbar ist.</p></div>";
-              waitForReboot();
-            } else {
-              // Fehlerseite vom Gerät 1:1 übernehmen (enthält Details + Link zurück)
-              document.open();
-              document.write(html);
-              document.close();
-            }
-          })
-          .catch(err => {
-            console.error("Firmware-Upload fehlgeschlagen:", err);
-            document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
-              "<h3>Firmware-Upload fehlgeschlagen.</h3>" +
-              "<p>Verbindung zum Gerät unterbrochen? Bitte Seite neu laden und erneut versuchen.</p></div>";
-          });
-
-        return false;
-      }
-
-      // ===== Init =====
       window.onload = () => {
         openFirmwareModalUI.listenerAdded = false;
-
-        const savedTab = localStorage.getItem("stayOnSettings") === "true"
-          ? "settings"
-          : "dashboard";
-
+        const savedTab = localStorage.getItem("stayOnSettings") === "true" ? "settings" : "dashboard";
         localStorage.removeItem("stayOnSettings");
         showTab(savedTab);
 
-        // Live-Daten + Chart dauerhaft starten – egal welcher Tab
+        const themeSel = document.getElementById('themeSelect');
+        if (themeSel) themeSel.value = localStorage.getItem('theme') || 'system';
+
         setInterval(updateLiveData, 5000);
         setInterval(updateChart, 5000);
         ajaxFormHandler("tempschutzForm", "Temperaturschutz gespeichert.");
@@ -1212,60 +1135,81 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         ajaxFormHandler("discoveryPrefixForm", "Discovery Prefix gespeichert.");
       };
 
-      // ===== AJAX Hilfsfunktion =====
       function ajaxFormHandler(formId, successMessage = "Gespeichert!") {
         const form = document.getElementById(formId);
         if (!form) return;
-
         form.addEventListener("submit", function (e) {
           e.preventDefault();
           const data = new FormData(form);
-          fetch(form.action, {
-            method: "POST",
-            body: new URLSearchParams(data)
-          }).then(() => {
-            alert(successMessage);
-          }).catch(err => {
-            console.error("AJAX-Fehler:", err);
-          });
+          fetch(form.action, { method: "POST", body: new URLSearchParams(data) })
+            .then(() => { alert(successMessage); })
+            .catch(err => { console.error("AJAX-Fehler:", err); });
         });
       }
     </script>
   )rawliteral";
 
-//CSS (komplett statisch -> liegt im Flash (PROGMEM), landet nie als String im RAM)
 const char CSS_CONTENT[] PROGMEM = R"rawliteral(
-    body {
-      font-family: Arial, sans-serif;
-      background: #f8f9fa;
-      margin: 20px;
-      color: #2c5777; /* neue dunklere Textfarbe */
+    /* Nur zwei echte Theme-Definitionen: Hell (Default in :root) und Dunkel
+       ([data-theme="dark"]). "System" ist keine eigene CSS-Definition, sondern
+       wird per JS einmalig zur Ladezeit (und bei Änderung) in "light" oder
+       "dark" aufgelöst - dadurch reicht diese eine Dunkel-Palette für beide
+       Fälle, ohne sie ein zweites Mal für "System" zu duplizieren. */
+    :root {
+      --bg: #f8f9fa;
+      --text: #2c5777;
+      --fieldset-bg: #ffffffcc;
+      --border: #ccc;
+      --input-bg: white;
+      --button-bg: #e1ecf4;
+      --button-border: #7aa7c7;
+      --button-text: #39739d;
+      --button-hover-bg: #b3d3ea;
+      --hint-color: gray;
+      --chart-bg: white;
+      --chart-border: #ccc;
+      --chart-text: #333333;
+      --chart-grid: rgba(0,0,0,0.08);
     }
-    h1 {
-      color: #2c5777;
-    }
-    form {
-      margin: 20px 0;
-    }
-    canvas {
-      background: white;
-      border: 1px solid #ccc;
-      margin-bottom: 20px;
-    }
-    .hidden {
-      display: none !important;
+    [data-theme="dark"] {
+      /* Bewusst kein reines Schwarz und kein reines Weiß - angenehmerer
+         Kontrast für längeres Ablesen des Dashboards. */
+      --bg: #22262b;
+      --text: #c9d1d9;
+      --fieldset-bg: #2b2f36cc;
+      --border: #3a3f47;
+      --input-bg: #2b2f36;
+      --button-bg: #333a42;
+      --button-border: #4d6a80;
+      --button-text: #a8c5da;
+      --button-hover-bg: #3f4750;
+      --hint-color: #8b939b;
+      --chart-bg: #2b2f36;
+      --chart-border: #3a3f47;
+      --chart-text: #c9d1d9;
+      --chart-grid: rgba(255,255,255,0.10);
     }
 
-    button,
-    input[type='submit'],
-    input[type='button'],
-    .button-link {
-      background-color: #e1ecf4;
+    body {
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      margin: 20px;
+      color: var(--text);
+    }
+    h1 { color: var(--text); }
+    form { margin: 20px 0; }
+    /* Chart-Hintergrund folgt jetzt dem Theme; die Achsen-/Legendenfarben
+       werden zusätzlich im JS gesetzt, da Chart.js diese nicht aus CSS liest. */
+    canvas { background: var(--chart-bg); border: 1px solid var(--chart-border); margin-bottom: 20px; }
+    .hidden { display: none !important; }
+
+    button, input[type='submit'], input[type='button'], .button-link {
+      background-color: var(--button-bg);
       border-radius: 3px;
-      border: 1px solid #7aa7c7;
+      border: 1px solid var(--button-border);
       box-shadow: rgba(255, 255, 255, .7) 0 1px 0 0 inset;
       box-sizing: border-box;
-      color: #39739d;
+      color: var(--button-text);
       cursor: pointer;
       display: inline-block;
       font-family: -apple-system,system-ui,"Segoe UI","Liberation Sans",sans-serif;
@@ -1283,38 +1227,30 @@ const char CSS_CONTENT[] PROGMEM = R"rawliteral(
       white-space: nowrap;
     }
 
-    button:hover,
-    input[type='submit']:hover,
-    input[type='button']:hover,
-    .button-link:hover {
-      background-color: #b3d3ea;
-      color: #2c5777;
+    button:hover, input[type='submit']:hover, input[type='button']:hover, .button-link:hover {
+      background-color: var(--button-hover-bg);
+      color: var(--text);
     }
 
-    button:focus,
-    input[type='submit']:focus,
-    input[type='button']:focus {
+    button:focus, input[type='submit']:focus, input[type='button']:focus {
       box-shadow: 0 0 0 4px rgba(0, 149, 255, .15);
     }
 
-    button:active,
-    input[type='submit']:active,
-    input[type='button']:active {
-      background-color: #a0c7e4;
+    button:active, input[type='submit']:active, input[type='button']:active {
+      background-color: var(--button-hover-bg);
       box-shadow: none;
-      color: #2c5777;
+      color: var(--text);
     }
 
-    a.button-link {
-      text-align: center;
-    }
+    a.button-link { text-align: center; }
 
     select {
       padding: 5px 10px;
       font-size: 1em;
-      border: 1px solid #ccc;
+      border: 1px solid var(--border);
       border-radius: 5px;
-      background-color: white;
+      background-color: var(--input-bg);
+      color: var(--text);
       margin: 5px 0;
       appearance: none;
       -webkit-appearance: none;
@@ -1326,93 +1262,39 @@ const char CSS_CONTENT[] PROGMEM = R"rawliteral(
       box-shadow: 0 0 3px #007bff55;
     }
 
-    .switch {
-      position: relative;
-      display: inline-block;
-      width: 50px;
-      height: 24px;
-      margin-left: 10px;
-    }
-    .switch input {
-      display: none;
-    }
+    .switch { position: relative; display: inline-block; width: 50px; height: 24px; margin-left: 10px; }
+    .switch input { display: none; }
     .slider {
-      position: absolute;
-      cursor: pointer;
-      background-color: #ccc;
-      border-radius: 24px;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      transition: 0.4s;
+      position: absolute; cursor: pointer; background-color: #ccc; border-radius: 24px;
+      top: 0; left: 0; right: 0; bottom: 0; transition: 0.4s;
     }
     .slider:before {
-      content: "";
-      position: absolute;
-      height: 18px;
-      width: 18px;
-      left: 3px;
-      bottom: 3px;
-      background-color: white;
-      border-radius: 50%;
-      transition: 0.4s;
+      content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px;
+      background-color: white; border-radius: 50%; transition: 0.4s;
     }
-    input:checked + .slider {
-      background-color: #007bff;
-    }
-    input:checked + .slider:before {
-      transform: translateX(26px);
-    }
+    input:checked + .slider { background-color: #007bff; }
+    input:checked + .slider:before { transform: translateX(26px); }
 
     .modal {
-      position: fixed;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      z-index: 1000;
-      background: rgba(0,0,0,0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000;
+      background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
     }
-    .modal.hidden {
-      display: none !important;
-    }
+    .modal.hidden { display: none !important; }
     .modal-content {
-      background: #fff;
-      padding: 20px;
-      border-radius: 10px;
-      max-width: 400px;
-      width: 90%;
-      box-shadow: 0 0 10px #000;
-      position: relative;
+      background: var(--fieldset-bg); padding: 20px; border-radius: 10px; max-width: 400px; width: 90%;
+      box-shadow: 0 0 10px #000; position: relative; color: var(--text);
     }
-    .close {
-      position: absolute;
-      top: 10px;
-      right: 15px;
-      font-size: 1.5em;
-      cursor: pointer;
-    }
+    .close { position: absolute; top: 10px; right: 15px; font-size: 1.5em; cursor: pointer; }
 
     fieldset {
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      padding: 10px 15px;
-      margin-bottom: 20px;
-      background-color: #ffffffcc;
+      border: 1px solid var(--border); border-radius: 8px; padding: 10px 15px;
+      margin-bottom: 20px; background-color: var(--fieldset-bg);
     }
-    legend {
-      font-weight: bold;
-      padding: 0 5px;
-      color: #2c5777;
-    }
-    input[type='text'],
-    input[type='number'],
-    input[type='password'],
-    select,
-    textarea {
-      color: #2c5777;
+    legend { font-weight: bold; padding: 0 5px; color: var(--text); }
+    input[type='text'], input[type='number'], input[type='password'], select, textarea {
+      color: var(--text);
+      background-color: var(--input-bg);
+      border: 1px solid var(--border);
     }
   )rawliteral";
 
@@ -1420,41 +1302,65 @@ void handleCSS() {
   server.send_P(200, "text/css", CSS_CONTENT);
 }
 
-//Root
 void handleRoot() {
-  // Statt einmal einen mehrere KB großen String zusammenzubauen und dann per
-  // server.send() zu verschicken: die Seite wird stückweise gestreamt
-  // (server.sendContent), analog zu handleChartData()/handleFirmwareBackup().
-  // Der Heap braucht dadurch nie einen großen zusammenhängenden Block für die
-  // komplette Seite - die größten Brocken (CSS/JS) kommen zudem direkt aus
-  // dem Flash (PROGMEM) und landen gar nicht erst als String im RAM.
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/html", "");
 
-  server.sendContent("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" + String(NAME) + "</title>"
+  // Das <html>-Tag bekommt sofort per winzigem Inline-Script data-theme gesetzt,
+  // noch bevor das eigentliche CSS/JS (aus /style.css bzw. PROGMEM) geladen ist.
+  // So gibt es keinen kurzen "hellen Blitz" beim Laden im Dark-Mode. Die
+  // eigentliche Logik (CSS-Variablen je nach data-theme) steckt komplett im
+  // ohnehin vorhandenen CSS - hier kommt nur die Zuweisung dazu, kein neuer
+  // Speicherbedarf auf dem ESP32 (Theme-Wahl lebt rein im Browser/localStorage).
+  // "System" wird hier einmalig in "light" oder "dark" aufgelöst und als
+  // data-theme gesetzt - das CSS kennt dadurch nur noch zwei echte
+  // Definitionen (Default = hell, [data-theme="dark"]), keine dritte
+  // Duplizierung für "System". localStorage speichert weiterhin die
+  // ursprüngliche Wahl (inkl. "system"), damit das Dropdown korrekt anzeigt.
+  server.sendContent("<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+                      "<script>(function(){"
+                      "var t=localStorage.getItem('theme')||'system';"
+                      "var r=(t==='system')?(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t;"
+                      "document.documentElement.setAttribute('data-theme', r);"
+                      "})();</script>"
+                      "<title>" + String(NAME) + "</title>"
                       "<link rel='stylesheet' href='/style.css'></head><body>");
-  server.sendContent("<h1>" + String(NAME) + " " + String(FIRMWARE_VERSION) + " Interface</h1>");
+  server.sendContent("<h1 style='display:inline-block;'>" + String(NAME) + " " + String(FIRMWARE_VERSION) + " Interface</h1>");
+  server.sendContent("<span style='float:right;'>"
+                      "<label for='themeSelect'>Design:</label> "
+                      "<select id='themeSelect' onchange='setTheme(this.value)'>"
+                      "<option value='light'>Hell</option>"
+                      "<option value='dark'>Dunkel</option>"
+                      "<option value='system'>System</option>"
+                      "</select></span>");
 
-  // Tabs oben
   server.sendContent("<p><button onclick=\"showTab('dashboard')\">Dashboard</button>"
                       "<button onclick=\"localStorage.setItem('manualSettingsClick','true'); showTab('settings')\">Einstellungen</button>");
 
-  // Eingefügte UI-Blöcke: jede Sektion wird sofort gesendet statt vorher gesammelt
   server.sendContent(getDashboardHtml());
   server.sendContent(getSettingsHtml());
   server.sendContent(getFirmwareModalHtml());
 
-  // Kein Server-seitiges %SCHWELLE%-Replace mehr nötig (Wert kommt jetzt live
-  // aus /livedata) -> JS kann komplett statisch aus dem Flash gestreamt werden.
   server.sendContent_P(MAIN_SCRIPT_JS);
 
   server.sendContent("</body></html>");
-  server.sendContent(""); // beendet die Chunked-Übertragung
+  server.sendContent("");
 }
-//Dashboard
+
+// Erkennt, ob noch die Auslieferungs-Zugangsdaten aktiv sind (admin/admin123).
+// Dient nur als Erinnerung im Dashboard, ist kein Sicherheitsmechanismus.
+bool verwendetStandardZugangsdaten() {
+  return strcmp(configUsername, "admin") == 0 && strcmp(configPassword, "admin123") == 0;
+}
+
 String getDashboardHtml() {
   String html;
   html += "<div id='dashboardTab'>";
+  if (verwendetStandardZugangsdaten()) {
+    html += "<p style='background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; border-radius:6px; padding:10px 14px; margin-bottom:16px;'>"
+            "&#9888; Es werden noch die Standard-Zugangsdaten (admin / admin123) verwendet. "
+            "Bitte unter Einstellungen &rarr; Zugang (Login) ein eigenes Passwort vergeben.</p>";
+  }
   html += "<div id='live'><p><strong>Zeit:</strong> <span id='zeit'></span><br>";
   html += "<strong>Innen:</strong> <span id='t_in'></span>, <span id='rh_in'></span><br>";
   html += "<strong>Außen:</strong> <span id='t_out'></span>, <span id='rh_out'></span><br>";
@@ -1480,50 +1386,39 @@ String getDashboardHtml() {
   html += "</div>";
   return html;
 }
-//Settings
+
 String getSettingsHtml() {
   String html;
   html += "<div id='settingsTab' class='hidden'>";
   html += "<h2>Einstellungen</h2>";
 
-  // Temperaturschutz
   html += "<fieldset><legend>Temperaturschutz</legend>";
   html += "<form id='tempschutzForm' method='POST' action='/tempschutz'>";
-  html += "<label title='Schützt die Innenraumluft vor zu starker Auskühlung durch Lüften. Hat Vorrang vor allen anderen Regeln, auch vor der Feuchteregelung.'>"
-          "<input type='checkbox' name='aktiv'";
+  html += "<label><input type='checkbox' name='aktiv'";
   if (schutzVorAuskuehlungAktiv) html += " checked";
   html += "> Aktivieren</label><br>";
-  html += "Mindest-Innentemperatur (°C): <input type='number' step='0.1' name='min_temp' value='" + String(minTempInnen, 1) + "' "
-          "title='Sinkt die Innentemperatur unter diesen Wert, wird die Lüftung sofort abgeschaltet und bleibt gesperrt, bis die Temperatur wieder darüber liegt.\nTipp: 12,0 °C ist ein guter Standardwert für die meisten Keller-/Wohnräume.'><br>";
+  html += "Mindest-Innentemperatur (°C): <input type='number' step='0.1' name='min_temp' value='" + String(minTempInnen, 1) + "'><br>";
   html += "<input type='submit' value='Speichern'></form></fieldset>";
 
-  // Austrocknungsschutz
   html += "<fieldset><legend>Austrocknungsschutz</legend>";
   html += "<form id='austrocknungsschutzForm' method='POST' action='/austrocknungsschutz'>";
-  html += "<label title='Verhindert, dass die Innenluft durch fortgesetztes Lüften zu trocken wird. Wird als Erstes geprüft und hat Vorrang vor Temperaturschutz und Feuchteregelung.'>"
-          "<input type='checkbox' name='aktiv'";
+  html += "<label><input type='checkbox' name='aktiv'";
   if (schutzVorAustrocknungAktiv) html += " checked";
   html += "> Aktivieren</label><br>";
-  html += "Mindest-RH innen (%): <input type='number' step='0.1' name='min_rh' value='" + String(minFeuchteInnen, 1) + "' "
-          "title='Sinkt die relative Innenfeuchte unter diesen Wert, wird die Lüftung sofort abgeschaltet.\nTipp: 35,0 % ist ein guter Standardwert, um zu trockene Raumluft im Winter zu vermeiden.'><br>";
+  html += "Mindest-RH innen (%): <input type='number' step='0.1' name='min_rh' value='" + String(minFeuchteInnen, 1) + "'><br>";
   html += "<input type='submit' value='Speichern'>";
   html += "</form></fieldset>";
 
-  // Feuchteregelung
   html += "<fieldset><legend>Feuchteregelung</legend>";
   html += "<form id='feuchteregelungForm' method='POST' action='/feuchteregelung'>";
-  html += "<label title='Alternative Regelstrategie: Statt anhand der Taupunktdifferenz zu lüften, hält diese Funktion die Innenfeuchte aktiv in einem Zielband (siehe Ziel-RH und Hysterese). Ersetzt bei Aktivierung die klassische Taupunkt-Differenz-Logik samt Mindestlaufzeit/-pause.'>"
-          "<input type='checkbox' name='aktiv'";
+  html += "<label><input type='checkbox' name='aktiv'";
   if (konstanteFeuchteAktiv) html += " checked";
   html += "> Aktivieren</label><br>";
-  html += "Ziel-RH innen (%): <input type='number' step='0.1' name='ziel_rh' value='" + String(zielFeuchteInnen, 1) + "' "
-          "title='Gewünschte relative Innenfeuchte, die gehalten werden soll.\nTipp: 45,0 % ist für die meisten Wohnräume ein angenehmer Zielwert.'><br>";
-  html += "Hysterese (%): <input type='number' step='0.1' name='hysterese' value='" + String(hysterese, 1) + "' "
-          "title='Toleranzband um den Zielwert, innerhalb dessen nicht geregelt wird (Ziel-RH ± Hysterese).\nTipp: 2,0 % vermeidet zu häufiges Schalten um den Zielwert herum.'><br>";
+  html += "Ziel-RH innen (%): <input type='number' step='0.1' name='ziel_rh' value='" + String(zielFeuchteInnen, 1) + "'><br>";
+  html += "Hysterese (%): <input type='number' step='0.1' name='hysterese' value='" + String(hysterese, 1) + "'><br>";
   html += "<input type='submit' value='Speichern'>";
   html += "</form></fieldset>";
 
-  // Taupunktdifferenz-Schwellenwert
   html += "<fieldset><legend>Taupunkt-Differenz-Schwellenwert</legend>";
   html += "<form id='schwelleForm' method='POST' action='/setSchwelle'>";
   html += "Taupunkt-Differenz (°C), ab der gelüftet wird:<br>";
@@ -1531,8 +1426,7 @@ String getSettingsHtml() {
           "title='Empfohlener Wert: 4,0 °C\n\nDie Außenluft muss mindestens so viel \"trockener\" sein (Taupunkt-Differenz), damit gelüftet wird.\n\nTipp: Höher = vorsichtiger, niedriger = aggressiver lüften.'><br>";
   html += "<input type='submit' value='Schwellenwert speichern'>";
   html += "</form></fieldset>";
-  
-  // Lueftungstimer
+
   html += "<fieldset><legend>Lüfter/Relais-Schutzzeiten</legend>";
   html += "<form id='timerForm' method='POST' action='/timer'>";
   html += "Mindestlaufzeit (Minuten): <input type='number' name='laufzeit' value='" + String(mindestLaufzeit_ms / 60000) + "' "
@@ -1546,43 +1440,37 @@ String getSettingsHtml() {
   html += "<input type='submit' value='Timer speichern'>";
   html += "</form></fieldset>";
 
-  // Sensorquelle (inkl. MQTT-Umschalter). Die Modus-Auswahl (Hardware/MQTT)
-  // und das komplette MQTT-Fieldset darunter werden nur eingeblendet, wenn
-  // MQTT aktiv ist - macht ohne aktives MQTT ohnehin keinen Sinn, und der
-  // frühere Warnhinweis ("Auswahl gesperrt") wird dadurch überflüssig.
+  // Sensorquelle: MQTT-Umschalter sitzt hier direkt, die Hardware/MQTT-Auswahl
+  // für innen/außen wird nur eingeblendet, solange MQTT tatsächlich aktiv ist -
+  // ohne aktives MQTT gibt es sonst nichts sinnvoll umzuschalten.
   html += "<fieldset><legend>Sensorquelle</legend>";
-  html += "<form id='modusForm' method='POST' action='/setModus'>";
-  html += "<div id='mqttModusFelder' class='" + String(mqttAktiv ? "" : "hidden") + "'>";
-  html += "Modus innen: <select name='modus_innen' title='Woher der Innensensor seine Werte bezieht: \"Hardware\" liest den lokal angeschlossenen Sensor, \"MQTT\" übernimmt Werte aus dem unten konfigurierten MQTT-Topic.'>";
-  html += "<option value='hardware'" + String(modus_innen == "hardware" ? " selected" : "") + ">Hardware</option>";
-  html += "<option value='mqtt'" + String(modus_innen == "mqtt" ? " selected" : "") + ">MQTT</option>";
-  html += "</select><br>";
-  html += "Modus außen: <select name='modus_aussen' title='Woher der Außensensor seine Werte bezieht: \"Hardware\" liest den lokal angeschlossenen Sensor, \"MQTT\" übernimmt Werte aus dem unten konfigurierten MQTT-Topic.'>";
-  html += "<option value='hardware'" + String(modus_aussen == "hardware" ? " selected" : "") + ">Hardware</option>";
-  html += "<option value='mqtt'" + String(modus_aussen == "mqtt" ? " selected" : "") + ">MQTT</option>";
-  html += "</select><br>";
-  html += "</div>";
-  html += "Sensortyp außen: <select name='sensor_typ_aussen' title='Welcher Sensortyp am Außenfühler angeschlossen ist. Muss zur tatsächlich verbauten Hardware passen, sonst werden Temperatur/Feuchte falsch ausgelesen.'>";
-  html += "<option value='dht22'" + String(sensorTypAussen == "dht22" ? " selected" : "") + ">DHT22</option>";
-  html += "<option value='sht31'" + String(sensorTypAussen == "sht31" ? " selected" : "") + ">SHT31</option>";
-  html += "</select><br>";
-  html += "<input type='submit' value='Modus speichern'>";
-  html += "</form>";
   html += "<form method='POST' action='/setMQTT'>";
-  html += "<label for='mqtt_toggle' title='Aktiviert bzw. trennt die MQTT-Verbindung sofort. Nur bei aktivem MQTT lassen sich Sensorquellen auf \"MQTT\" stellen und erscheinen die MQTT-Einstellungen darunter.'>MQTT aktiv:</label>";
-  html += "<input type='hidden' name='mqtt' value=''>"; // WICHTIG!
+  html += "<label for='mqtt_toggle'>MQTT aktiv:</label>";
+  html += "<input type='hidden' name='mqtt' value=''>";
   html += "<label class='switch'>";
   html += "<input type='checkbox' name='mqtt_toggle' id='mqtt_toggle' ";
   html += mqttAktiv ? "checked " : "";
   html += "onchange='toggleMQTT(this)'>";
   html += "<span class='slider round'></span>";
   html += "</label></form>";
+  html += "<div id='mqttModusFelder' class='" + String(mqttAktiv ? "" : "hidden") + "'>";
+  html += "<form id='modusForm' method='POST' action='/setModus'>";
+  html += "Modus innen: <select name='modus_innen'>";
+  html += "<option value='hardware'" + String(modus_innen == "hardware" ? " selected" : "") + ">Hardware</option>";
+  html += "<option value='mqtt'" + String(modus_innen == "mqtt" ? " selected" : "") + ">MQTT</option>";
+  html += "</select><br>";
+  html += "Modus außen: <select name='modus_aussen'>";
+  html += "<option value='hardware'" + String(modus_aussen == "hardware" ? " selected" : "") + ">Hardware</option>";
+  html += "<option value='mqtt'" + String(modus_aussen == "mqtt" ? " selected" : "") + ">MQTT</option>";
+  html += "</select><br>";
+  html += "<input type='submit' value='Modus speichern'>";
+  html += "</form>";
+  html += "</div>";
   html += "</fieldset>";
 
-  // MQTT Einstellungen - nur sichtbar, wenn MQTT aktiv ist (Umschalter jetzt
-  // oben bei "Sensorquelle"; hier nur noch der eigentliche MQTT-Kram)
+  // MQTT-Fieldset (Verbindungsdaten, Topics, Discovery) - komplett ausgeblendet,
+  // solange MQTT nicht aktiv ist. Der Toggle selbst sitzt jetzt oben bei Sensorquelle.
   html += "<fieldset id='mqttFieldset' class='" + String(mqttAktiv ? "" : "hidden") + "'><legend>MQTT</legend>";
-  // Verbindungsdaten
   html += "<form id='mqttConfigForm' method='POST' action='/mqttconfig'>";
   html += "<p><strong>MQTT-Server</strong> Zugangsdaten:</p>";
   html += "Server: <input name='server' value='" + String(mqttServer) + "' "
@@ -1594,8 +1482,6 @@ String getSettingsHtml() {
   html += "Passwort: <input type='password' name='pass' value='" + String(mqttPassword) + "' "
           "title='Passwort für den oben angegebenen Benutzer (optional)'><br>";
   html += "<input type='submit' value='MQTT-Verbindung speichern'></form>";
-  // Topics & Prefix
-  // Discovery-Prefix
   html += "<form id='discoveryPrefixForm' method='POST' action='/mqttdiscoveryprefix'>";
   html += "<p><strong>MQTT Discovery Prefix</strong>:</p>";
   html += "<input name='mqtt_discovery_prefix' value='" + mqttDiscoveryPrefix + "' "
@@ -1616,47 +1502,38 @@ String getSettingsHtml() {
   html += "Außen Feuchte: <input name='hygro_aussen' value='" + mqttHygroAussen + "' "
           "title='MQTT-Topic, von dem Luftfeuchtigkeit für den Außenbereich empfangen wird.'><br>";
   html += "<input type='submit' value='MQTT Topics speichern'></form>";
-  // Manuelle Discovery-Auslösung
   html += "<form id='discoveryForm' method='POST' action='/mqttdiscovery'>";
   html += "<input type='submit' value='MQTT Discovery erneut senden'>";
   html += "</form>";
   html += "</fieldset>";
 
-  // Hostname ändern
   html += "<fieldset><legend>Hostname</legend>";
   html += "<form id='hostnameForm' method='POST' action='/hostname'>";
   html += "Gerätename im Netzwerk (Hostname): <input name='hostname' value='" + hostname + "' "
           "title='Dieser Name wird z. B. für mDNS (taupunktlueftung.local) verwendet. Achtung: Nach Änderung ist das Webinterface evtl. nur noch unter der neuen Adresse (oder über die IP-Adresse) erreichbar!' style='display:inline-block; width:auto;'><span style='margin-left:8px; color:gray;'>IP: " + WiFi.localIP().toString() + "</span><br>";
-  html += "<p style='font-size:0.9em;'>⚠️ Nach Änderung ist das Webinterface unter dem neuen Namen erreichbar (z. B. <code>http://neuername.local</code>).</p>";
+  html += "<p style='font-size:0.9em;'>Nach Änderung ist das Webinterface unter dem neuen Namen erreichbar (z. B. <code>http://neuername.local</code>).</p>";
   html += "<input type='submit' value='Hostname speichern'>";
   html += "</form></fieldset>";
 
-  // Zugang (Login) ändern: Benutzername und Passwort als zwei unabhängige
-  // Formulare im selben Fieldset (wie schon bei MQTT: mehrere Forms, ein Block).
   html += "<fieldset><legend>Zugang (Login)</legend>";
-  html += "<p style='font-size:0.9em;color:gray;'>⚠️ Das Webinterface läuft über HTTP ohne Verschlüsselung (kein TLS). Das Passwort reist bei jeder Anfrage im Klartext über das lokale Netz - für ein Heimnetzwerk ein akzeptabler Kompromiss, aber bitte hier kein Passwort verwenden, das auch anderswo (E-Mail, Online-Konten usw.) im Einsatz ist.</p>";
   html += "<form id='benutzernameForm' onsubmit='return submitBenutzernameForm(event);'>";
-  html += "Benutzername: <input type='text' id='user_neu' name='neuer_benutzername' value='" + String(configUsername) + "' autocomplete='username' "
-          "title='Anmeldename für den Zugriff auf das gesamte Webinterface (HTTP-Basic-Auth). Nach dem Ändern fragt der Browser sofort neu nach den Zugangsdaten.'><br>";
+  html += "Benutzername: <input type='text' id='user_neu' name='neuer_benutzername' value='" + String(configUsername) + "' autocomplete='username'><br>";
   html += "<input type='submit' value='Benutzername ändern'>";
   html += "</form>";
   html += "<form id='passwortForm' onsubmit='return submitPasswortForm(event);'>";
-  html += "Neues Passwort: <input type='password' id='pw_neu' name='neues_passwort' autocomplete='new-password' "
-          "title='Neues Passwort für den Webinterface-Login. Da die Übertragung unverschlüsselt (HTTP) erfolgt, bitte ein Passwort wählen, das nicht anderswo wiederverwendet wird.'><br>";
-  html += "Bestätigen: <input type='password' id='pw_bestaetigen' name='passwort_bestaetigen' autocomplete='new-password' title='Zur Kontrolle das neue Passwort erneut eingeben.'><br>";
+  html += "Neues Passwort: <input type='password' id='pw_neu' name='neues_passwort' autocomplete='new-password'><br>";
+  html += "Bestätigen: <input type='password' id='pw_bestaetigen' name='passwort_bestaetigen' autocomplete='new-password'><br>";
   html += "<input type='submit' value='Passwort ändern'>";
   html += "</form></fieldset>";
 
-  // Firmware-Button
   html += "<fieldset><legend>Firmware</legend>";
   html += "<p><button type='button' onclick=\"showTab('settings'); setTimeout(openFirmwareModalUI, 100);\">Firmware-Update</button>";
   html += "<a class='button-link' href='/firmwarebackup' download>Aktuelle Firmware sichern (Download)</a></p>";
   html += "</fieldset>";
 
-  // Neustart-Button
   html += "<fieldset><legend>Gerät</legend>";
   html += "<p><button type='button' onclick='rebootDevice()'>Gerät neu starten</button></p>";
-  html += "<p><button type='button' onclick='wifiResetDevice()' title='Löscht nur die gespeicherten WLAN-Zugangsdaten, alle anderen Einstellungen bleiben erhalten.'>WLAN neu konfigurieren</button></p>";
+  html += "<p><button type='button' onclick='wifiResetDevice()'>WLAN neu konfigurieren</button></p>";
   html += "<p style='font-size:0.9em; color:gray;'>Löscht nur die gespeicherten WLAN-Zugangsdaten (alle anderen Einstellungen bleiben erhalten) und startet neu. "
           "Danach mit einem Smartphone/PC mit dem Netz „TaupunktLueftung-Setup“ verbinden, um ein neues WLAN einzurichten – wie bei der Ersteinrichtung.</p>";
   html += "</fieldset>";
@@ -1680,10 +1557,10 @@ String getSettingsHtml() {
   html += "<p align='center'>Wenn du dieses Projekt nützlich findest, kannst du mir einen Kaffee spendieren:</p>";
   html += "<p align='center'><a href='https://www.buymeacoffee.com/mallewski' target='_blank'><img src='https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png' alt='Buy Me A Coffee' height='60' width='217'></a></p>";
 
-  html += "</div>"; // settingsTab
+  html += "</div>";
   return html;
 }
-//Firmware
+
 String getFirmwareModalHtml() {
   String html = R"rawliteral(
     <div id="firmwareModal" class="modal hidden">
@@ -1692,11 +1569,10 @@ String getFirmwareModalHtml() {
         <h3>Firmware-Update durchführen</h3>
   )rawliteral";
 
-  // Hier dynamisch einfügen:
   html += "<p>Installierte Firmware-Version: " + String(FIRMWARE_VERSION) + "</p>";
 
   html += R"rawliteral(
-        <form id="firmwareUploadForm" method="POST" action="/update" enctype="multipart/form-data" onsubmit="return submitFirmwareUpdate(event);">
+        <form method="POST" action="/update" enctype="multipart/form-data" onsubmit="return confirmFirmwareUpdate();">
           <input type="file" name="firmware" required><br><br>
           <input type="submit" value="Upload & Update">
         </form>
@@ -1707,22 +1583,7 @@ String getFirmwareModalHtml() {
   return html;
 }
 
-//Auth
-// HTTP-Basic-Auth statt eigenem Login/Session-System: server.authenticate()
-// prüft nur den vom Client mitgeschickten Authorization-Header - es wird
-// nichts Neues im RAM gehalten (kein Session-Speicher, kein Token-Store).
-// configPassword existierte vorher schon (aus secrets.h), wurde bisher aber
-// nirgends benutzt - das wird hier nachgeholt.
-bool requireAuth() {
-  if (!server.authenticate(configUsername, configPassword)) {
-    server.requestAuthentication(BASIC_AUTH, "TaupunktLueftung");
-    return false;
-  }
-  return true;
-}
-
 //Handler
-//Temperaturschutz
 void handleTempSchutz() {
   if (server.hasArg("aktiv")) {
     schutzVorAuskuehlungAktiv = true;
@@ -1740,7 +1601,7 @@ void handleTempSchutz() {
 
   redirectToSettings();
 }
-//Austrocknungsschutz
+
 void handleAustrocknungsschutz() {
   schutzVorAustrocknungAktiv = server.hasArg("aktiv");
   if (server.hasArg("min_rh")) {
@@ -1754,7 +1615,7 @@ void handleAustrocknungsschutz() {
 
   server.send(200, "text/plain", "OK");
 }
-//Feuchteregelung
+
 void handleFeuchteregelung() {
   konstanteFeuchteAktiv = server.hasArg("aktiv");
   if (server.hasArg("ziel_rh")) zielFeuchteInnen = server.arg("ziel_rh").toFloat();
@@ -1768,7 +1629,7 @@ void handleFeuchteregelung() {
 
   server.send(200, "text/plain", "OK");
 }
-//Schwellenwert
+
 void handleSetSchwelle() {
   if (server.hasArg("schwelle")) {
     taupunktDifferenzSchwellwert = server.arg("schwelle").toFloat();
@@ -1778,7 +1639,7 @@ void handleSetSchwelle() {
   }
   redirectToSettings();
 }
-//Lueftungstimer
+
 void handleTimerSettings() {
   if (server.hasArg("laufzeit")) {
     mindestLaufzeit_ms = server.arg("laufzeit").toInt() * 60 * 1000;
@@ -1788,30 +1649,24 @@ void handleTimerSettings() {
   }
 
   prefs.begin("config", false);
-  // Vorher: Schlüssel "min_on"/"min_off" per putULong() geschrieben, aber
-  // beim Start als "min_laufzeit"/"min_pause" per getUInt() gelesen (siehe
-  // setupPreferences()) - passte weder Name noch Typ zusammen, wodurch der
-  // gespeicherte Wert nie gefunden wurde und nach jedem Neustart wieder auf
-  // die Werkswerte (2/5 Minuten) zurückfiel. Jetzt Name UND Typ angeglichen.
   prefs.putUInt("min_laufzeit", mindestLaufzeit_ms / 60000);
   prefs.putUInt("min_pause", mindestPause_ms / 60000);
   prefs.end();
 
   redirectToSettings();
 }
-//Modus (eigene Sensoren oder MQTT)
+
+// Sensorquelle (Hardware/MQTT) - Sensortyp DHT22/SHT31 ist wieder Compile-Zeit-Sache
 void handleSetModus() {
   if (server.hasArg("modus_innen")) modus_innen = server.arg("modus_innen");
   if (server.hasArg("modus_aussen")) modus_aussen = server.arg("modus_aussen");
-  if (server.hasArg("sensor_typ_aussen")) sensorTypAussen = server.arg("sensor_typ_aussen");
   prefs.begin("config", false);
   prefs.putString("modus_innen", modus_innen);
   prefs.putString("modus_aussen", modus_aussen);
-  prefs.putString("sensor_typ_aussen", sensorTypAussen);
   prefs.end();
   redirectToSettings();
 }
-//MQTT
+
 void handleSetMQTT() {
   if (server.hasArg("mqtt")) {
     if (debugMQTT) {
@@ -1827,6 +1682,7 @@ void handleSetMQTT() {
   }
   redirectToSettings();
 }
+
 void handleMQTTConfig() {
   if (server.hasArg("server")) strncpy(mqttServer, server.arg("server").c_str(), sizeof(mqttServer));
   if (server.hasArg("port")) mqttPort = server.arg("port").toInt();
@@ -1839,6 +1695,7 @@ void handleMQTTConfig() {
 
   redirectToSettings();
 }
+
 void handleMQTTTopics() {
   mqttTempInnen   = server.arg("temp_innen");
   mqttHygroInnen  = server.arg("hygro_innen");
@@ -1858,6 +1715,7 @@ void handleMQTTTopics() {
 
   redirectToSettings();
 }
+
 void handleMQTTDiscovery() {
   if (mqttClient.connected()) {
     publishMQTTDiscovery();
@@ -1868,7 +1726,6 @@ void handleMQTTDiscovery() {
   redirectToSettings();
 }
 
-//Hostname
 void handleHostnameUpdate() {
   if (server.hasArg("hostname")) {
     String newName = server.arg("hostname");
@@ -1879,8 +1736,8 @@ void handleHostnameUpdate() {
       prefs.putString("hostname", hostname);
       prefs.end();
       WiFi.setHostname(hostname.c_str());
-      MDNS.end();  // Beende bisherigen mDNS-Dienst
-      MDNS.begin(hostname.c_str());  // Starte mDNS mit dem neuen Namen
+      MDNS.end();
+      MDNS.begin(hostname.c_str());
       logEvent("Hostname geändert auf: " + hostname);
     }
   }
@@ -1900,7 +1757,6 @@ void handleHostnameUpdate() {
   server.send(200, "text/html", html);
 }
 
-//Webinterface-Benutzername
 void handleSetUsername() {
   String neu = server.hasArg("neuer_benutzername") ? server.arg("neuer_benutzername") : "";
   neu.trim();
@@ -1909,7 +1765,7 @@ void handleSetUsername() {
     server.send(400, "text/plain", "Benutzername darf nicht leer sein.");
     return;
   }
-  if (neu.length() >= sizeof(configUsername)) { // Platz für Nullterminierung lassen
+  if (neu.length() >= sizeof(configUsername)) {
     server.send(400, "text/plain", "Benutzername zu lang (max. 31 Zeichen).");
     return;
   }
@@ -1923,7 +1779,6 @@ void handleSetUsername() {
   server.send(200, "text/plain", "OK");
 }
 
-//Webinterface-Passwort
 void handleSetPassword() {
   String neu = server.hasArg("neues_passwort") ? server.arg("neues_passwort") : "";
   String bestaetigung = server.hasArg("passwort_bestaetigen") ? server.arg("passwort_bestaetigen") : "";
@@ -1932,7 +1787,7 @@ void handleSetPassword() {
     server.send(400, "text/plain", "Passwort darf nicht leer sein.");
     return;
   }
-  if (neu.length() >= sizeof(configPassword)) { // Platz für Nullterminierung lassen
+  if (neu.length() >= sizeof(configPassword)) {
     server.send(400, "text/plain", "Passwort zu lang (max. 63 Zeichen).");
     return;
   }
@@ -1950,19 +1805,14 @@ void handleSetPassword() {
   server.send(200, "text/plain", "OK");
 }
 
-//Firmware
 void handleFirmwareUpload() {
   HTTPUpload& upload = server.upload();
 
   if (upload.status == UPLOAD_FILE_START) {
-    // Nur den Authorization-Header prüfen (keine Response senden!) - eine
-    // Antwort mitten im Multipart-Body würde den Parser der WebServer-Lib
-    // durcheinanderbringen. Der eigentliche 401 kommt über den regulären
-    // Handler unten (requireAuth()), sobald der Body fertig gelesen ist.
     firmwareUploadAuthorized = server.authenticate(configUsername, configPassword);
     if (!firmwareUploadAuthorized) {
       Serial.println("Firmware-Upload abgelehnt: keine gültige Authentifizierung.");
-      return; // kein Update.begin() -> es wird nichts geflasht
+      return;
     }
     prepareForFirmwareUpdate();
     firmwareUpdateSuccess = false;
@@ -1988,7 +1838,7 @@ void handleFirmwareUpload() {
 }
 
 void prepareForFirmwareUpdate() {
-  mqttAktivVorUpdate = mqttAktiv;   // Zustand merken für möglichen Rollback
+  mqttAktivVorUpdate = mqttAktiv;
   mqttClient.disconnect();
   mqttAktiv = false;
   updateModeActive = true;
@@ -2028,7 +1878,6 @@ void handleFirmwareBackup() {
 }
 
 // --- Setup --->
-//Setup Wifi - WLAN-Verbindung herstellen (via Access Point falls keine bekannt)
 void setupWiFi() {
   prefs.begin("config", true);
   hostname = prefs.getString("hostname", DEFAULT_HOSTNAME);
@@ -2037,7 +1886,7 @@ void setupWiFi() {
 
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(hostname.c_str());
-  
+
   esp_netif_t* sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
   if (sta_netif) {
     esp_netif_set_hostname(sta_netif, hostname.c_str());
@@ -2074,7 +1923,9 @@ void setupWiFi() {
   }
 }
 
-//Setup Sensoren
+// Sensor-Setup: Sensortyp außen ist wieder eine reine Compile-Zeit-Entscheidung
+// über #define SENSOR_TYP_AUSSEN_SHT31 - nur die tatsächlich benötigte
+// Bibliothek (DHT ODER SHT31 für außen) wird dadurch überhaupt eingebunden.
 void setupSensoren() {
   Wire.begin();
   Wire.setTimeOut(100); // verhindert unbegrenztes Blockieren des loop() bei I2C-Bushängern
@@ -2085,50 +1936,22 @@ void setupSensoren() {
   setLEDs(false, false, false);
 
   shtInnen.begin(0x44);
-  if (sensorTypAussen == "sht31") {
-    shtAussen.begin(0x45);
-  } else {
-    dht.begin();
-  }
+#ifdef SENSOR_TYP_AUSSEN_SHT31
+  shtAussen.begin(0x45);
+#else
+  dht.begin();
+#endif
 }
-//setup Preferences
+
 void setupPreferences() {
   prefs.begin("config", true);
   taupunktDifferenzSchwellwert = prefs.getFloat("schwelle", 4.0);
-
-  // Migration: bis einschließlich v4.0 schrieb handleTimerSettings() die
-  // Schutzzeiten unter "min_on"/"min_off" (und als ULong), gelesen wurde
-  // aber immer schon "min_laufzeit"/"min_pause" (als UInt) - Name UND Typ
-  // passten nicht zusammen, ein gespeicherter Wert wurde nie gefunden und
-  // fiel nach jedem Neustart auf die Werkswerte zurück. handleTimerSettings()
-  // schreibt ab jetzt korrekt unter den hier gelesenen Schlüsseln; hier noch
-  // einmalig alte, unter dem falschen Schlüssel vorhandene Werte übernehmen,
-  // damit individuell angepasste Zeiten beim Update nicht verloren gehen.
-  bool hatNeueSchluessel = prefs.isKey("min_laufzeit");
-  bool hatAlteSchluessel = prefs.isKey("min_on") && prefs.isKey("min_off");
-  unsigned long altLaufzeit = prefs.getULong("min_on", 2);
-  unsigned long altPause = prefs.getULong("min_off", 5);
-
-  mindestLaufzeit_ms = prefs.getUInt("min_laufzeit", hatAlteSchluessel ? altLaufzeit : 2) * 60 * 1000;
-  mindestPause_ms = prefs.getUInt("min_pause", hatAlteSchluessel ? altPause : 5) * 60 * 1000;
-  prefs.end();
-
-  if (!hatNeueSchluessel && hatAlteSchluessel) {
-    prefs.begin("config", false);
-    prefs.putUInt("min_laufzeit", mindestLaufzeit_ms / 60000);
-    prefs.putUInt("min_pause", mindestPause_ms / 60000);
-    prefs.end();
-    logEvent("Lüfter-/Relais-Schutzzeiten aus altem Speicherformat migriert (min_on/min_off -> min_laufzeit/min_pause)");
-  }
-
-  prefs.begin("config", true);
-  letzteAktivierung = millis();     // konservativ: verhindert sofortiges Ausschalten-Dürfen nach Neustart
-  letzteDeaktivierung = millis();   // konservativ: volle Mindestpause muss nach JEDEM Neustart erst ablaufen,
-                                     // bevor die Lüftung wieder einschalten darf (schützt bei Reboot-Loops
-                                     // durch z.B. Spannungseinbrüche beim Relaisschalten)
+  mindestLaufzeit_ms = prefs.getUInt("min_laufzeit", 2) * 60 * 1000;
+  mindestPause_ms = prefs.getUInt("min_pause", 5) * 60 * 1000;
+  letzteAktivierung = millis();
+  letzteDeaktivierung = millis();
   modus_innen = prefs.getString("modus_innen", "hardware");
   modus_aussen = prefs.getString("modus_aussen", "hardware");
-  sensorTypAussen = prefs.getString("sensor_typ_aussen", "dht22");
   mqttAktiv = prefs.getBool("mqtt", false);
   schutzVorAuskuehlungAktiv = prefs.getBool("tempschutz", true);
   minTempInnen = prefs.getFloat("min_temp", 12.0);
@@ -2137,17 +1960,15 @@ void setupPreferences() {
   konstanteFeuchteAktiv = prefs.getBool("feuchte_regelung", false);
   zielFeuchteInnen = prefs.getFloat("ziel_rh", 45.0);
   hysterese = prefs.getFloat("hysterese", 2.0);
-  // Webinterface-Zugangsdaten: falls schon mal über die Einstellungen geändert,
-  // überschreiben die gespeicherten Werte die Defaults (secrets.h bzw. "admin").
-  // toCharArray() terminiert im Gegensatz zu strncpy() immer korrekt mit \0.
   String webUser = prefs.getString("web_user", configUsername);
   webUser.toCharArray(configUsername, sizeof(configUsername));
   String webPass = prefs.getString("web_pass", configPassword);
   webPass.toCharArray(configPassword, sizeof(configPassword));
   prefs.end();
+
   t2_letzterEintrag = millis();
   t3_letzterEintrag = millis();
-  // Historie-Arrays mit "keine Daten"-Sentinel vorbefüllen (verhindert falsche 0°C-Nulllinie im Chart)
+
   for (int i = 0; i < TIER1_POINTS; i++) {
     t1_td_in[i] = t1_td_out[i] = t1_diff[i] = t1_rh_in[i] = t1_rh_out[i] = HIST_NULL;
     t1_status[i] = false;
@@ -2163,7 +1984,7 @@ void setupPreferences() {
     t3_status[i] = false;
   }
 }
-//Setup MQTT
+
 void setupMQTT() {
   loadMQTTSettings();
   loadMQTTTopics();
@@ -2176,13 +1997,10 @@ void setupMQTT() {
     if (mqttAktiv) reconnectMQTT();
   }
 }
-//Setup Web Server
+
 void setupWebServer() {
   configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org");
 
-  // Alle Routen außer /style.css laufen jetzt über requireAuth() (HTTP-Basic-Auth).
-  // /style.css bleibt bewusst offen: enthält keine sensiblen Daten, nur Optik,
-  // und so bleibt zumindest das grobe Layout sichtbar, bevor man sich einloggt.
   server.on("/", []() { if (requireAuth()) handleRoot(); });
   server.on("/tempschutz", HTTP_POST, []() { if (requireAuth()) handleTempSchutz(); });
   server.on("/austrocknungsschutz", HTTP_POST, []() { if (requireAuth()) handleAustrocknungsschutz(); });
@@ -2211,7 +2029,7 @@ void setupWebServer() {
 
       publishMQTTDiscovery();
 
-      server.send(200, "text/plain", "OK"); // Nur als Feedback für AJAX
+      server.send(200, "text/plain", "OK");
     } else {
       server.send(400, "text/plain", "Missing prefix");
     }
@@ -2231,7 +2049,7 @@ void setupWebServer() {
   server.on("/setPassword", HTTP_POST, []() { if (requireAuth()) handleSetPassword(); });
   server.on("/firmwarebackup", HTTP_GET, []() { if (requireAuth()) handleFirmwareBackup(); });
   server.on("/update", HTTP_POST, []() {
-  if (!requireAuth()) return; // Upload-Handler (3. Argument unten) prüft den Header separat vor Update.begin()
+  if (!requireAuth()) return;
   server.sendHeader("Connection", "close");
 
   if (firmwareUpdateSuccess) {
@@ -2249,7 +2067,6 @@ void setupWebServer() {
     delay(1000);
     ESP.restart();
   } else {
-    // Rollback: Update-Modus verlassen, Dienste wiederherstellen
     updateModeActive = false;
     mqttAktiv = mqttAktivVorUpdate;
     if (mqttAktiv) {
@@ -2257,9 +2074,7 @@ void setupWebServer() {
     }
     logEvent("Firmware-Update fehlgeschlagen. Dienste wiederhergestellt.");
 
-    // 500 statt 200: erst dadurch kann das JS (fetch) Erfolg von Fehlschlag
-    // unterscheiden (res.ok), ohne den HTML-Inhalt der Antwort parsen zu müssen.
-    server.send(500, "text/html", R"rawliteral(
+    server.send(200, "text/html", R"rawliteral(
       <html><head><meta charset='UTF-8'><title>Update fehlgeschlagen</title><style>
         body { font-family: sans-serif; background: #f8f9fa; text-align: center; padding: 50px; }
         .status { font-size: 1.5em; color: #c0392b; }
@@ -2269,7 +2084,6 @@ void setupWebServer() {
       <a href='/'>Zurück zum Interface</a>
       </body></html>
     )rawliteral");
-    // Kein Neustart nötig – alte Firmware läuft normal weiter.
   }
 }, handleFirmwareUpload);
 
@@ -2282,10 +2096,10 @@ void setup() {
   Serial.begin(115200);
   esp_log_level_set("*", ESP_LOG_VERBOSE);
 
-  #ifdef DEBUG_ERASE_NVS // Nur wenn DEBUG_ERASE_NVS aktiv ist
-    nvs_flash_erase();  // !! löscht ALLE gespeicherten Daten im NVS (inkl. WiFi und Preferences)
+  #ifdef DEBUG_ERASE_NVS
+    nvs_flash_erase();
     nvs_flash_init();
-    Serial.println("⚠️  NVS wurde gelöscht (DEBUG_ERASE_NVS aktiviert)");
+    Serial.println("NVS wurde gelöscht (DEBUG_ERASE_NVS aktiviert)");
   #endif
 
   setupWiFi();
@@ -2298,17 +2112,16 @@ void setup() {
 }
 
 //--- Loop ---->
-//loop MQTT
 void handleMQTT() {
   if (!mqttAktiv) return;
   if (!mqttClient.connected()) reconnectMQTT();
   mqttClient.loop();
 }
-//Loop Web Server
+
 void handleWebServer() {
   server.handleClient();
 }
-//Loop Sensoren
+
 void handleSensorzyklus() {
   static unsigned long lastUpdate = 0;
   if (millis() - lastUpdate >= SENSORZYKLUS_MS) {
@@ -2329,7 +2142,6 @@ void loop() {
   static bool ledState = false;
 
   if (sensorFehlerInnen || sensorFehlerAussen) {
-    // blinke rote LED
     if (millis() - lastBlink > 500) {
       lastBlink = millis();
       ledState = !ledState;
@@ -2338,8 +2150,7 @@ void loop() {
       digitalWrite(STATUS_RED_PIN, ledState);
     }
 
-    // Trotzdem MQTT + Webserver + Sensor checken!
-    handleMQTT();        // <-- NEU
+    handleMQTT();
     handleWebServer();
     handleSensorzyklus();
     return;
