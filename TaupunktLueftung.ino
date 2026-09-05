@@ -1107,6 +1107,16 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         const go = confirm("Firmware-Update vorbereiten?\n\n- MQTT wird getrennt\n- Sensorlogik pausiert\n\nJetzt fortfahren?");
         if (go) {
           closeFirmwareModal();
+          // Die eigentliche Übertragung läuft weiterhin als normaler
+          // Formular-Upload (kein fetch/AJAX) - das ist für den
+          // Multipart-Upload robuster. Die Wartemeldung wird trotzdem
+          // sofort angezeigt: Der Browser führt die DOM-Änderung noch
+          // aus, bevor die Navigation zur /update-Antwort startet, und
+          // zeigt sie während der gesamten Übertragung an.
+          document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
+            "<h3>Firmware wird hochgeladen…</h3>" +
+            "<p>Bitte warten und die Seite währenddessen nicht schließen oder neu laden.<br>" +
+            "MQTT und Sensorik sind währenddessen pausiert.</p></div>";
           return true;
         }
         return false;
@@ -1394,28 +1404,35 @@ String getSettingsHtml() {
 
   html += "<fieldset><legend>Temperaturschutz</legend>";
   html += "<form id='tempschutzForm' method='POST' action='/tempschutz'>";
-  html += "<label><input type='checkbox' name='aktiv'";
+  html += "<label title='Schützt die Innenraumluft vor zu starker Auskühlung durch Lüften. Hat Vorrang vor allen anderen Regeln, auch vor der Feuchteregelung.'>"
+          "<input type='checkbox' name='aktiv'";
   if (schutzVorAuskuehlungAktiv) html += " checked";
   html += "> Aktivieren</label><br>";
-  html += "Mindest-Innentemperatur (°C): <input type='number' step='0.1' name='min_temp' value='" + String(minTempInnen, 1) + "'><br>";
+  html += "Mindest-Innentemperatur (°C): <input type='number' step='0.1' name='min_temp' value='" + String(minTempInnen, 1) + "' "
+          "title='Sinkt die Innentemperatur unter diesen Wert, wird die Lüftung sofort abgeschaltet und bleibt gesperrt, bis die Temperatur wieder darüber liegt.\nTipp: 12,0 °C ist ein guter Standardwert für die meisten Keller-/Wohnräume.'><br>";
   html += "<input type='submit' value='Speichern'></form></fieldset>";
 
   html += "<fieldset><legend>Austrocknungsschutz</legend>";
   html += "<form id='austrocknungsschutzForm' method='POST' action='/austrocknungsschutz'>";
-  html += "<label><input type='checkbox' name='aktiv'";
+  html += "<label title='Verhindert, dass die Innenluft durch fortgesetztes Lüften zu trocken wird. Wird als Erstes geprüft und hat Vorrang vor Temperaturschutz und Feuchteregelung.'>"
+          "<input type='checkbox' name='aktiv'";
   if (schutzVorAustrocknungAktiv) html += " checked";
   html += "> Aktivieren</label><br>";
-  html += "Mindest-RH innen (%): <input type='number' step='0.1' name='min_rh' value='" + String(minFeuchteInnen, 1) + "'><br>";
+  html += "Mindest-RH innen (%): <input type='number' step='0.1' name='min_rh' value='" + String(minFeuchteInnen, 1) + "' "
+          "title='Sinkt die relative Innenfeuchte unter diesen Wert, wird die Lüftung sofort abgeschaltet.\nTipp: 35,0 % ist ein guter Standardwert, um zu trockene Raumluft im Winter zu vermeiden.'><br>";
   html += "<input type='submit' value='Speichern'>";
   html += "</form></fieldset>";
 
   html += "<fieldset><legend>Feuchteregelung</legend>";
   html += "<form id='feuchteregelungForm' method='POST' action='/feuchteregelung'>";
-  html += "<label><input type='checkbox' name='aktiv'";
+  html += "<label title='Alternative Regelstrategie: Statt anhand der Taupunktdifferenz zu lüften, hält diese Funktion die Innenfeuchte aktiv in einem Zielband (siehe Ziel-RH und Hysterese). Ersetzt bei Aktivierung die klassische Taupunkt-Differenz-Logik samt Mindestlaufzeit/-pause.'>"
+          "<input type='checkbox' name='aktiv'";
   if (konstanteFeuchteAktiv) html += " checked";
   html += "> Aktivieren</label><br>";
-  html += "Ziel-RH innen (%): <input type='number' step='0.1' name='ziel_rh' value='" + String(zielFeuchteInnen, 1) + "'><br>";
-  html += "Hysterese (%): <input type='number' step='0.1' name='hysterese' value='" + String(hysterese, 1) + "'><br>";
+  html += "Ziel-RH innen (%): <input type='number' step='0.1' name='ziel_rh' value='" + String(zielFeuchteInnen, 1) + "' "
+          "title='Gewünschte relative Innenfeuchte, die gehalten werden soll.\nTipp: 45,0 % ist für die meisten Wohnräume ein angenehmer Zielwert.'><br>";
+  html += "Hysterese (%): <input type='number' step='0.1' name='hysterese' value='" + String(hysterese, 1) + "' "
+          "title='Toleranzband um den Zielwert, innerhalb dessen nicht geregelt wird (Ziel-RH ± Hysterese).\nTipp: 2,0 % vermeidet zu häufiges Schalten um den Zielwert herum.'><br>";
   html += "<input type='submit' value='Speichern'>";
   html += "</form></fieldset>";
 
@@ -1445,7 +1462,7 @@ String getSettingsHtml() {
   // ohne aktives MQTT gibt es sonst nichts sinnvoll umzuschalten.
   html += "<fieldset><legend>Sensorquelle</legend>";
   html += "<form method='POST' action='/setMQTT'>";
-  html += "<label for='mqtt_toggle'>MQTT aktiv:</label>";
+  html += "<label for='mqtt_toggle' title='Aktiviert bzw. trennt die MQTT-Verbindung sofort. Nur bei aktivem MQTT lassen sich Sensorquellen auf \"MQTT\" stellen und erscheinen die MQTT-Einstellungen darunter.'>MQTT aktiv:</label>";
   html += "<input type='hidden' name='mqtt' value=''>";
   html += "<label class='switch'>";
   html += "<input type='checkbox' name='mqtt_toggle' id='mqtt_toggle' ";
@@ -1455,11 +1472,11 @@ String getSettingsHtml() {
   html += "</label></form>";
   html += "<div id='mqttModusFelder' class='" + String(mqttAktiv ? "" : "hidden") + "'>";
   html += "<form id='modusForm' method='POST' action='/setModus'>";
-  html += "Modus innen: <select name='modus_innen'>";
+  html += "Modus innen: <select name='modus_innen' title='Woher der Innensensor seine Werte bezieht: \"Hardware\" liest den lokal angeschlossenen Sensor, \"MQTT\" übernimmt Werte aus dem unten konfigurierten MQTT-Topic.'>";
   html += "<option value='hardware'" + String(modus_innen == "hardware" ? " selected" : "") + ">Hardware</option>";
   html += "<option value='mqtt'" + String(modus_innen == "mqtt" ? " selected" : "") + ">MQTT</option>";
   html += "</select><br>";
-  html += "Modus außen: <select name='modus_aussen'>";
+  html += "Modus außen: <select name='modus_aussen' title='Woher der Außensensor seine Werte bezieht: \"Hardware\" liest den lokal angeschlossenen Sensor, \"MQTT\" übernimmt Werte aus dem unten konfigurierten MQTT-Topic.'>";
   html += "<option value='hardware'" + String(modus_aussen == "hardware" ? " selected" : "") + ">Hardware</option>";
   html += "<option value='mqtt'" + String(modus_aussen == "mqtt" ? " selected" : "") + ">MQTT</option>";
   html += "</select><br>";
@@ -1517,12 +1534,14 @@ String getSettingsHtml() {
 
   html += "<fieldset><legend>Zugang (Login)</legend>";
   html += "<form id='benutzernameForm' onsubmit='return submitBenutzernameForm(event);'>";
-  html += "Benutzername: <input type='text' id='user_neu' name='neuer_benutzername' value='" + String(configUsername) + "' autocomplete='username'><br>";
+  html += "Benutzername: <input type='text' id='user_neu' name='neuer_benutzername' value='" + String(configUsername) + "' autocomplete='username' "
+          "title='Anmeldename für den Zugriff auf das gesamte Webinterface (HTTP-Basic-Auth). Nach dem Ändern fragt der Browser sofort neu nach den Zugangsdaten.'><br>";
   html += "<input type='submit' value='Benutzername ändern'>";
   html += "</form>";
   html += "<form id='passwortForm' onsubmit='return submitPasswortForm(event);'>";
-  html += "Neues Passwort: <input type='password' id='pw_neu' name='neues_passwort' autocomplete='new-password'><br>";
-  html += "Bestätigen: <input type='password' id='pw_bestaetigen' name='passwort_bestaetigen' autocomplete='new-password'><br>";
+  html += "Neues Passwort: <input type='password' id='pw_neu' name='neues_passwort' autocomplete='new-password' "
+          "title='Neues Passwort für den Webinterface-Login. Da die Übertragung unverschlüsselt (HTTP) erfolgt, bitte ein Passwort wählen, das nicht anderswo wiederverwendet wird.'><br>";
+  html += "Bestätigen: <input type='password' id='pw_bestaetigen' name='passwort_bestaetigen' autocomplete='new-password' title='Zur Kontrolle das neue Passwort erneut eingeben.'><br>";
   html += "<input type='submit' value='Passwort ändern'>";
   html += "</form></fieldset>";
 
@@ -1533,7 +1552,7 @@ String getSettingsHtml() {
 
   html += "<fieldset><legend>Gerät</legend>";
   html += "<p><button type='button' onclick='rebootDevice()'>Gerät neu starten</button></p>";
-  html += "<p><button type='button' onclick='wifiResetDevice()'>WLAN neu konfigurieren</button></p>";
+  html += "<p><button type='button' onclick='wifiResetDevice()' title='Löscht nur die gespeicherten WLAN-Zugangsdaten, alle anderen Einstellungen bleiben erhalten.'>WLAN neu konfigurieren</button></p>";
   html += "<p style='font-size:0.9em; color:gray;'>Löscht nur die gespeicherten WLAN-Zugangsdaten (alle anderen Einstellungen bleiben erhalten) und startet neu. "
           "Danach mit einem Smartphone/PC mit dem Netz „TaupunktLueftung-Setup“ verbinden, um ein neues WLAN einzurichten – wie bei der Ersteinrichtung.</p>";
   html += "</fieldset>";
@@ -1946,8 +1965,32 @@ void setupSensoren() {
 void setupPreferences() {
   prefs.begin("config", true);
   taupunktDifferenzSchwellwert = prefs.getFloat("schwelle", 4.0);
-  mindestLaufzeit_ms = prefs.getUInt("min_laufzeit", 2) * 60 * 1000;
-  mindestPause_ms = prefs.getUInt("min_pause", 5) * 60 * 1000;
+
+  // Migration: eine ältere Firmware-Version schrieb die Schutzzeiten unter
+  // "min_on"/"min_off" (als ULong), gelesen wurde aber bereits "min_laufzeit"/
+  // "min_pause" (als UInt) - Name UND Typ passten nicht zusammen, ein
+  // gespeicherter Wert wurde nie gefunden und fiel nach jedem Neustart auf
+  // die Werkswerte zurück. Hier einmalig alte, unter dem falschen Schlüssel
+  // vorhandene Werte übernehmen, damit individuell angepasste Zeiten beim
+  // Update nicht verloren gehen.
+  bool hatNeueSchluessel = prefs.isKey("min_laufzeit");
+  bool hatAlteSchluessel = prefs.isKey("min_on") && prefs.isKey("min_off");
+  unsigned long altLaufzeit = prefs.getULong("min_on", 2);
+  unsigned long altPause = prefs.getULong("min_off", 5);
+
+  mindestLaufzeit_ms = prefs.getUInt("min_laufzeit", hatAlteSchluessel ? altLaufzeit : 2) * 60 * 1000;
+  mindestPause_ms = prefs.getUInt("min_pause", hatAlteSchluessel ? altPause : 5) * 60 * 1000;
+  prefs.end();
+
+  if (!hatNeueSchluessel && hatAlteSchluessel) {
+    prefs.begin("config", false);
+    prefs.putUInt("min_laufzeit", mindestLaufzeit_ms / 60000);
+    prefs.putUInt("min_pause", mindestPause_ms / 60000);
+    prefs.end();
+    logEvent("Lüfter-/Relais-Schutzzeiten aus altem Speicherformat migriert (min_on/min_off -> min_laufzeit/min_pause)");
+  }
+
+  prefs.begin("config", true);
   letzteAktivierung = millis();
   letzteDeaktivierung = millis();
   modus_innen = prefs.getString("modus_innen", "hardware");
