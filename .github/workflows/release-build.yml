@@ -42,12 +42,12 @@ jobs:
           echo "#define CONFIG_PASSWORD \"${{ secrets.CONFIG_PASSWORD }}\"" >> secrets.h
           echo "#endif" >> secrets.h
 
-      # Nur für die SHT31-Variante: den Compile-Zeit-Schalter einkommentieren.
-      # Die DHT22-Variante braucht hier nichts, da das der Default im Quellcode ist.
-      - name: Sensortyp für SHT31-Variante aktivieren
-        if: matrix.variant == 'sht31'
+      # Nur für die DHT22-Variante: den Compile-Zeit-Schalter auskommentieren.
+      # Die SHT31-Variante braucht hier nichts, da das jetzt der Default im Quellcode ist.
+      - name: Sensortyp für DHT22-Variante deaktivieren (SHT31 ist Default)
+        if: matrix.variant == 'dht22'
         run: |
-          sed -i 's|^//#define SENSOR_TYP_AUSSEN_SHT31|#define SENSOR_TYP_AUSSEN_SHT31|' TaupunktLueftung.ino
+          sed -i 's|^#define SENSOR_TYP_AUSSEN_SHT31|//#define SENSOR_TYP_AUSSEN_SHT31|' TaupunktLueftung.ino
           grep -n "SENSOR_TYP_AUSSEN_SHT31" TaupunktLueftung.ino | head -1
 
       - name: Sketch kompilieren (${{ matrix.variant }})
