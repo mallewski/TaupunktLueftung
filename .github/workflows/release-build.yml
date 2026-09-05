@@ -10,6 +10,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        variant: [dht22, sht31]
     steps:
       - name: Repo auschecken
         uses: actions/checkout@v4
@@ -39,15 +42,23 @@ jobs:
           echo "#define CONFIG_PASSWORD \"${{ secrets.CONFIG_PASSWORD }}\"" >> secrets.h
           echo "#endif" >> secrets.h
 
-      - name: Sketch kompilieren
+      # Nur für die SHT31-Variante: den Compile-Zeit-Schalter einkommentieren.
+      # Die DHT22-Variante braucht hier nichts, da das der Default im Quellcode ist.
+      - name: Sensortyp für SHT31-Variante aktivieren
+        if: matrix.variant == 'sht31'
+        run: |
+          sed -i 's|^//#define SENSOR_TYP_AUSSEN_SHT31|#define SENSOR_TYP_AUSSEN_SHT31|' TaupunktLueftung.ino
+          grep -n "SENSOR_TYP_AUSSEN_SHT31" TaupunktLueftung.ino | head -1
+
+      - name: Sketch kompilieren (${{ matrix.variant }})
         run: |
           arduino-cli compile --fqbn esp32:esp32:esp32 --output-dir ./build .
 
       - name: Binary umbenennen
         run: |
-          cp ./build/*.ino.bin ./TaupunktLueftung.bin
+          cp ./build/*.ino.bin ./TaupunktLueftung_${{ matrix.variant }}.bin
 
       - name: An Release anhängen
         uses: softprops/action-gh-release@v2
         with:
-          files: ./TaupunktLueftung.bin
+          files: ./TaupunktLueftung_${{ matrix.variant }}.bin
