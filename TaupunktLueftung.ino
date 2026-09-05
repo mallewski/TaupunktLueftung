@@ -1224,6 +1224,7 @@ const char CSS_CONTENT[] PROGMEM = R"rawliteral(
        "dark" aufgelöst - dadurch reicht diese eine Dunkel-Palette für beide
        Fälle, ohne sie ein zweites Mal für "System" zu duplizieren. */
     :root {
+      color-scheme: light;
       --bg: #f8f9fa;
       --text: #2c5777;
       --fieldset-bg: #ffffffcc;
@@ -1240,6 +1241,12 @@ const char CSS_CONTENT[] PROGMEM = R"rawliteral(
       --chart-grid: rgba(0,0,0,0.08);
     }
     [data-theme="dark"] {
+      /* color-scheme ist der eigentlich entscheidende Teil dieses Fixes:
+         Ohne diese Zeile rendert der Browser native Bedienelemente
+         (Checkbox, Zahlen-Spinner, z.T. auch Scrollbars) weiterhin in
+         seiner hellen Standardoptik, unabhängig von unseren eigenen
+         --bg/--text-Variablen - genau das sorgte für die grellen Felder. */
+      color-scheme: dark;
       /* Bewusst kein reines Schwarz und kein reines Weiß - angenehmerer
          Kontrast für längeres Ablesen des Dashboards. */
       --bg: #22262b;
@@ -1363,6 +1370,11 @@ const char CSS_CONTENT[] PROGMEM = R"rawliteral(
       color: var(--text);
       background-color: var(--input-bg);
       border: 1px solid var(--border);
+    }
+    input[type='checkbox'] {
+      /* Ergänzt color-scheme (siehe :root/[data-theme="dark"] oben): passt
+         zusätzlich die Häkchen-/Rahmenfarbe der Checkbox ans Theme an. */
+      accent-color: var(--button-border);
     }
   )rawliteral";
 
