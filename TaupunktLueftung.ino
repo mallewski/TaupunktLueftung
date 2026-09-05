@@ -881,7 +881,14 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                 plugins: { legend: { labels: { color: cc.text } } },
                 scales: {
                   x: { ticks: { color: cc.text, maxRotation: 45, minRotation: 30, autoSkip: true, maxTicksLimit: 10 }, grid: { color: cc.grid } },
-                  y: { beginAtZero: true, max: 1, ticks: { color: cc.text }, grid: { color: cc.grid } }
+                  y: {
+                    beginAtZero: true, max: 1,
+                    ticks: {
+                      color: cc.text, stepSize: 1,
+                      callback: function(value) { return value === 1 ? 'AN' : 'AUS'; }
+                    },
+                    grid: { color: cc.grid }
+                  }
                 }
               }
             });
@@ -975,7 +982,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
               }
             });
           }
-          ch.update();
+          ch.update('none');
         });
       }
 
@@ -1127,21 +1134,49 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
       }
 
       function confirmFirmwareUpdate() {
-        const go = confirm("Firmware-Update vorbereiten?\n\n- MQTT wird getrennt\n- Sensorlogik pausiert\n\nJetzt fortfahren?");
-        if (go) {
-          closeFirmwareModal();
-          // Die eigentliche Übertragung läuft weiterhin als normaler
-          // Formular-Upload (kein fetch/AJAX) - das ist für den
-          // Multipart-Upload robuster. Die Wartemeldung wird trotzdem
-          // sofort angezeigt: Der Browser führt die DOM-Änderung noch
-          // aus, bevor die Navigation zur /update-Antwort startet, und
-          // zeigt sie während der gesamten Übertragung an.
-          document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
-            "<h3>Firmware wird hochgeladen…</h3>" +
-            "<p>Bitte warten und die Seite währenddessen nicht schließen oder neu laden.<br>" +
-            "MQTT und Sensorik sind währenddessen pausiert.</p></div>";
-          return true;
-        }
+        return confirm("Firmware-Update vorbereiten?\n\n- MQTT wird getrennt\n- Sensorlogik pausiert\n\nJetzt fortfahren?");
+      }
+
+      // ===== Firmware-Upload mit Wartesseite =====
+      // Vorher: normales <form>-POST - der Browser navigiert weg und zeigt bis
+      // zur Antwort nur seinen eigenen (nichtssagenden) Lade-Indikator. Jetzt
+      // übernimmt fetch() den Upload, damit wir zwischen Klick und Ergebnis
+      // eine eigene "Wird verifiziert..."-Seite zeigen können, und damit das
+      // JS anhand von res.ok (200 vs. 500) zuverlässig zwischen Erfolg und
+      // Fehlschlag unterscheiden kann.
+      function submitFirmwareUpdate(e) {
+        e.preventDefault();
+        if (!confirmFirmwareUpdate()) return false;
+
+        const formData = new FormData(document.getElementById('firmwareUploadForm'));
+
+        document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
+          "<h3>Firmware wird hochgeladen und verifiziert…</h3>" +
+          "<p>Bitte warten - je nach Dateigröße und WLAN-Geschwindigkeit kann das einen Moment dauern.<br>" +
+          "Bei Erfolg startet das Gerät automatisch neu.</p></div>";
+
+        fetch('/update', { method: "POST", body: formData })
+          .then(res => res.text().then(html => ({ ok: res.ok, html })))
+          .then(({ ok, html }) => {
+            if (ok) {
+              document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
+                "<h3>Firmware verifiziert, Update erfolgreich.</h3>" +
+                "<p>Neustart läuft… Seite lädt automatisch neu, sobald das Gerät wieder erreichbar ist.</p></div>";
+              waitForReboot();
+            } else {
+              // Fehlerseite vom Gerät 1:1 übernehmen (enthält Details + Link zurück)
+              document.open();
+              document.write(html);
+              document.close();
+            }
+          })
+          .catch(err => {
+            console.error("Firmware-Upload fehlgeschlagen:", err);
+            document.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'>" +
+              "<h3>Firmware-Upload fehlgeschlagen.</h3>" +
+              "<p>Verbindung zum Gerät unterbrochen? Bitte Seite neu laden und erneut versuchen.</p></div>";
+          });
+
         return false;
       }
 
@@ -1614,7 +1649,7 @@ String getFirmwareModalHtml() {
   html += "<p>Installierte Firmware-Version: " + String(FIRMWARE_VERSION) + "</p>";
 
   html += R"rawliteral(
-        <form method="POST" action="/update" enctype="multipart/form-data" onsubmit="return confirmFirmwareUpdate();">
+        <form id="firmwareUploadForm" method="POST" action="/update" enctype="multipart/form-data" onsubmit="return submitFirmwareUpdate(event);">
           <input type="file" name="firmware" required><br><br>
           <input type="submit" value="Upload & Update">
         </form>
