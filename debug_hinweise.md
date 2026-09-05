@@ -15,7 +15,7 @@ Je nach IDE und System findest du die Datei hier:
 
 ## Webinterface fragt ständig nach Benutzername/Passwort
 
-Das Webinterface ist per HTTP Basic Auth geschützt. Standard-Zugangsdaten nach dem ersten Flashen: Benutzername `admin`, Passwort wie in `secrets.h` unter `CONFIG_PASSWORD` hinterlegt.
+Das Webinterface ist per HTTP Basic Auth geschützt. Standard-Zugangsdaten nach dem ersten Flashen: Benutzername `admin`, Passwort wie in `secrets.h` unter `CONFIG_PASSWORD` hinterlegt – bei den fertigen Release-`.bin`-Dateien ist das `admin123`. Solange diese Standard-Zugangsdaten aktiv sind, zeigt das Dashboard automatisch einen roten Warnhinweis an. **Dieser Hinweis sollte ernst genommen werden** – bitte zeitnah ein eigenes Passwort unter Einstellungen → Zugang (Login) vergeben.
 
 - Der Browser fragt beim ersten Aufruf einmalig danach und merkt sich die Zugangsdaten anschließend für die laufende Sitzung.
 - Nach einer Änderung von Benutzername oder Passwort über die Einstellungsseite lädt die Seite automatisch neu und der Browser fragt sofort erneut – das ist erwartetes Verhalten, kein Fehler.
