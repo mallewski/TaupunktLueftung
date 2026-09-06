@@ -70,6 +70,14 @@ unsigned long sensorFehlerSeit = 0; // 0 = kein Fehler aktiv; Fail-Safe-Timer (k
 // reicht eine kurze Gnadenfrist, um unnötiges Relais-Takten zu vermeiden.
 #define SENSOR_FAILSAFE_MS (15UL * 1000UL)
 
+// Mindestabstand zwischen zwei automatischen MQTT-Verbindungsversuchen aus
+// loop() heraus (handleMQTT()). Ohne diese Bremse würde reconnectMQTT() bei
+// nicht erreichbarem Broker bei JEDEM loop()-Durchlauf erneut blockierend
+// versuchen zu verbinden und dabei die Weboberfläche (server.handleClient()
+// kommt in loop() erst danach dran) am Stück lahmlegen.
+#define MQTT_RECONNECT_INTERVAL_MS 5000UL
+unsigned long letzterMqttVersuch = 0;
+
 char mqttServer[64] = "";     // leer oder z.B. "192.168.1.100"
 int mqttPort = 1883;          // Standard-MQTT-Port
 char mqttUser[32] = "";
@@ -636,6 +644,8 @@ void resubscribeMQTTTopics() {
 
 void reconnectMQTT() {
   if (!mqttAktiv) return;
+  letzterMqttVersuch = millis(); // auch bei manuellem Aufruf (Config speichern, MQTT-Toggle)
+                                  // mitzählen, damit direkt danach kein doppelter Auto-Versuch folgt
   while (!mqttClient.connected()) {
     Serial.print("MQTT verbinden mit: "); Serial.println(mqttServer);
     if (mqttClient.connect(NAME, mqttUser, mqttPassword, (mqttPublishPrefix + "availability").c_str(), 1, true, "offline" )) {
@@ -2104,6 +2114,10 @@ void setupMQTT() {
   loadMQTTTopics();
   mqttClient.setServer(mqttServer, mqttPort);
   mqttClient.setKeepAlive(60);
+  // Kurzer Socket-Timeout (Default der Bibliothek: 15s): ist der Broker nicht
+  // erreichbar, gibt ein Verbindungsversuch dadurch schneller auf, statt die
+  // komplette Weboberfläche minutenlang mitzublockieren (siehe reconnectMQTT()).
+  mqttClient.setSocketTimeout(2);
   mqttClient.setCallback(mqttCallback);
   String willTopic = mqttPublishPrefix + "availability";
   if (WiFi.status() == WL_CONNECTED) {
@@ -2226,12 +2240,25 @@ void setup() {
 }
 
 //--- Loop ---->
+//loop MQTT
 void handleMQTT() {
   if (!mqttAktiv) return;
-  if (!mqttClient.connected()) reconnectMQTT();
+  if (!mqttClient.connected()) {
+    // Gedrosselter Reconnect: reconnectMQTT() blockiert bei nicht erreichbarem
+    // Broker für die Dauer eines Verbindungsversuchs (siehe setSocketTimeout()
+    // in setupMQTT()). Ohne diese Bremse würde loop() das bei JEDEM Durchlauf
+    // erneut versuchen und dabei server.handleClient() am Stück ausbremsen,
+    // solange der Broker nicht erreichbar ist - genau das macht das Webinterface
+    // "unzuverlässig erreichbar".
+    if (millis() - letzterMqttVersuch >= MQTT_RECONNECT_INTERVAL_MS) {
+      reconnectMQTT();
+    }
+    return; // ohne Verbindung gibt es für mqttClient.loop() nichts zu tun
+  }
   mqttClient.loop();
 }
 
+//Loop Web Server
 void handleWebServer() {
   server.handleClient();
 }
