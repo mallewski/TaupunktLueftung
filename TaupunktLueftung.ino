@@ -1974,6 +1974,7 @@ void setupWiFi() {
   if (hostname.isEmpty()) hostname = DEFAULT_HOSTNAME;
 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.setHostname(hostname.c_str());
 
   esp_netif_t* sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
