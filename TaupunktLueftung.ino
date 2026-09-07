@@ -1436,7 +1436,15 @@ void handleRoot() {
                       "document.documentElement.setAttribute('data-theme', r);"
                       "})();</script>"
                       "<title>" + String(NAME) + "</title>"
-                      "<link rel='stylesheet' href='/style.css'></head><body>");
+                      // ?v=FIRMWARE_VERSION als Cache-Buster: /style.css hat unten einen
+                      // Cache-Control: max-age=3600-Header. Ohne diesen Query-Parameter
+                      // würde ein Browser nach einem Firmware-Update bis zu eine Stunde
+                      // lang noch das alte, zwischengespeicherte CSS verwenden - genau das
+                      // Verhalten, das gerade auf dem Handy beobachtet wurde (nur nach
+                      // manuellem Cache-Leeren kam die aktuelle Seite). Ändert sich die
+                      // Firmware-Version, ist die URL für den Browser "neu" und wird frisch
+                      // geladen; bleibt die Version gleich, greift der Cache weiter normal.
+                      "<link rel='stylesheet' href='/style.css?v=" + String(FIRMWARE_VERSION) + "'></head><body>");
   server.sendContent("<h1 style='display:inline-block;'>" + String(NAME) + " " + String(FIRMWARE_VERSION) + " Interface</h1>");
   server.sendContent("<span style='float:right;'>"
                       "<label for='themeSelect'>Design:</label> "
@@ -1456,9 +1464,10 @@ void handleRoot() {
   // Chart.js bleibt eine externe CDN-Referenz (vom Browser ohnehin über
   // dessen eigenen HTTP-Cache verwaltet); das eigene JavaScript kommt jetzt
   // über die eigene, cachebare Route /script.js statt inline - siehe
-  // Kommentar bei MAIN_SCRIPT_JS und handleScriptJS().
+  // Kommentar bei MAIN_SCRIPT_JS und handleScriptJS(). ?v=FIRMWARE_VERSION
+  // als Cache-Buster, siehe Kommentar bei /style.css oben.
   server.sendContent("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>");
-  server.sendContent("<script src='/script.js'></script>");
+  server.sendContent("<script src='/script.js?v=" + String(FIRMWARE_VERSION) + "'></script>");
 
   server.sendContent("</body></html>");
   server.sendContent("");
