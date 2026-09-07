@@ -25,6 +25,7 @@ Die Lüftung wird über ein Relais geschaltet – optimalerweise in einem Setup 
 - Firmware-Backup: aktuell laufende Firmware lässt sich vor einem Update als `.bin` sichern
 - WLAN-Zugangsdaten lassen sich über einen Button im Webinterface zurücksetzen, ohne die übrigen Einstellungen zu verlieren
 - Unterstützt Firmware-Updates Over-The-Air (OTA). Nach erstmaligem Flashen via USB aus der Arduino IDE können angepasste Firmwarevarianten aus der Arduino IDE einfach per OTA erfolgen, oder aus einer Firmware-Datei per Webinterface eingespielt werden.
+- Performance-Optimierungen (ab v4.2): CSS/JavaScript werden vom Browser zwischengespeichert statt bei jedem Seitenaufruf neu vom ESP32 geladen; ein WLAN-Fix hält den Modem-Sleep-Modus dauerhaft deaktiviert (verhindert spürbare Verzögerungen nach WLAN-Wiederverbindungen); MQTT-Reconnect-Versuche sind gedrosselt, damit ein nicht erreichbarer Broker das Webinterface nicht mitblockiert.
 
 [![Screenshot_dashboard](https://github.com/mallewski/TaupunktLueftung/raw/main/docs/Screenshot_dashboard.png)](/mallewski/TaupunktLueftung/blob/main/docs/Screenshot_dashboard.png)
 
