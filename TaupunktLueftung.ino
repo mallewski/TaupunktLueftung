@@ -778,9 +778,14 @@ bool requireAuth() {
 }
 
 // --- Dashboard --->
+// Reines JavaScript (keine <script>-Tags mehr drumherum!): wird über die
+// eigene Route /script.js ausgeliefert (siehe handleScriptJS()), statt wie
+// früher bei jedem Seitenaufruf komplett inline in handleRoot() eingebettet
+// zu werden. Dadurch kann der Browser die Datei cachen (Cache-Control-Header
+// in handleScriptJS()) und muss die ca. 20 KB nicht bei jedem Laden neu vom
+// ESP32 anfordern - das war der Hauptgrund für die zuletzt spürbar langsamer
+// gewordenen Seitenaufrufe.
 const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
-    <script src='https://cdn.jsdelivr.net/npm/chart.js'></script>
-    <script>
       let SCHWELLWERT = 4.0;
       const COLOR_TD_IN = 'green';
       const COLOR_TD_OUT = 'blue';
@@ -1228,7 +1233,6 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
             .catch(err => { console.error("AJAX-Fehler:", err); });
         });
       }
-    </script>
   )rawliteral";
 
 const char CSS_CONTENT[] PROGMEM = R"rawliteral(
@@ -1394,7 +1398,20 @@ const char CSS_CONTENT[] PROGMEM = R"rawliteral(
   )rawliteral";
 
 void handleCSS() {
+  // Cache-Control: der Browser fragt /style.css dann nicht mehr bei jedem
+  // Seitenaufruf komplett neu beim ESP32 an, sondern nur einmal pro Stunde
+  // (bzw. bis der Browser-Cache geleert wird). Ändert sich das CSS durch ein
+  // Firmware-Update, bekommt der Browser es spätestens nach Ablauf der
+  // max-age automatisch wieder frisch.
+  server.sendHeader("Cache-Control", "public, max-age=3600");
   server.send_P(200, "text/css", CSS_CONTENT);
+}
+
+void handleScriptJS() {
+  // Siehe Kommentar bei handleCSS() - gleiches Prinzip fürs JavaScript, das
+  // vorher bei jedem Seitenaufruf komplett inline mitgeschickt wurde.
+  server.sendHeader("Cache-Control", "public, max-age=3600");
+  server.send_P(200, "application/javascript", MAIN_SCRIPT_JS);
 }
 
 void handleRoot() {
@@ -1436,7 +1453,12 @@ void handleRoot() {
   server.sendContent(getSettingsHtml());
   server.sendContent(getFirmwareModalHtml());
 
-  server.sendContent_P(MAIN_SCRIPT_JS);
+  // Chart.js bleibt eine externe CDN-Referenz (vom Browser ohnehin über
+  // dessen eigenen HTTP-Cache verwaltet); das eigene JavaScript kommt jetzt
+  // über die eigene, cachebare Route /script.js statt inline - siehe
+  // Kommentar bei MAIN_SCRIPT_JS und handleScriptJS().
+  server.sendContent("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>");
+  server.sendContent("<script src='/script.js'></script>");
 
   server.sendContent("</body></html>");
   server.sendContent("");
@@ -1982,6 +2004,17 @@ void handleFirmwareBackup() {
 }
 
 // --- Setup --->
+// Der ESP32-WLAN-Treiber setzt den Modem-Sleep-Modus bei jedem (Re-)Verbin-
+// dungsaufbau auf seinen Standard (aktiviert) zurück - nicht nur beim ersten
+// Verbinden über WiFiManager, sondern auch bei jeder automatischen
+// Wiederverbindung im laufenden Betrieb (z. B. nach einem kurzen WLAN-
+// Aussetzer bei schwachem Signal). Dieser Event-Handler setzt setSleep(false)
+// deshalb bei jeder erfolgreichen Verbindung erneut, statt sich nur auf den
+// einmaligen Aufruf direkt nach dem Setup zu verlassen.
+void onWifiVerbunden(WiFiEvent_t event, WiFiEventInfo_t info) {
+  WiFi.setSleep(false);
+}
+
 void setupWiFi() {
   prefs.begin("config", true);
   hostname = prefs.getString("hostname", DEFAULT_HOSTNAME);
@@ -1989,7 +2022,7 @@ void setupWiFi() {
   if (hostname.isEmpty()) hostname = DEFAULT_HOSTNAME;
 
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
+  WiFi.onEvent(onWifiVerbunden, ARDUINO_EVENT_WIFI_STA_GOT_IP);
   WiFi.setHostname(hostname.c_str());
 
   esp_netif_t* sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -2009,6 +2042,16 @@ void setupWiFi() {
     Serial.println("Kein WLAN – Offline-Modus");
     return;
   }
+
+  // WiFi.setSleep(false) MUSS erst hier, NACH wm.autoConnect(), gesetzt
+  // werden: WiFiManager baut die eigentliche WLAN-Verbindung intern selbst
+  // auf (eigene WiFi.begin()-Aufrufe, ggf. mehrere Verbindungsversuche/Scans)
+  // und der ESP32-WLAN-Treiber setzt den Modem-Sleep-Modus bei jedem
+  // (Re-)Verbindungsaufbau auf seinen Standard (aktiviert) zurück. Ein Aufruf
+  // vor autoConnect() wird dadurch wirkungslos überschrieben - das dürfte der
+  // Grund sein, warum sich an der Erreichbarkeit trotz des Aufrufs zuvor
+  // nichts geändert hat.
+  WiFi.setSleep(false);
 
   hostname = custom_hn.getValue();
   hostname.trim();
@@ -2150,6 +2193,7 @@ void setupWebServer() {
   server.on("/chartdata", []() { if (requireAuth()) handleChartData(); });
   server.on("/livedata", []() { if (requireAuth()) handleLiveData(); });
   server.on("/style.css", handleCSS);
+  server.on("/script.js", handleScriptJS);
   server.on("/mqttdiscovery", HTTP_POST, []() { if (requireAuth()) handleMQTTDiscovery(); });
   server.on("/mqttdiscoveryprefix", HTTP_POST, []() {
     if (!requireAuth()) return;
