@@ -597,9 +597,9 @@ void loadMQTTSettings() {
   mqttPort = prefs.getInt("mqtt_port", mqttPort);
   prefs.end();
 
-  strncpy(mqttServer, serverStr.c_str(), sizeof(mqttServer));
-  strncpy(mqttUser, user.c_str(), sizeof(mqttUser));
-  strncpy(mqttPassword, pass.c_str(), sizeof(mqttPassword));
+  serverStr.toCharArray(mqttServer, sizeof(mqttServer));
+  user.toCharArray(mqttUser, sizeof(mqttUser));
+  pass.toCharArray(mqttPassword, sizeof(mqttPassword));
   mqttClient.setServer(mqttServer, mqttPort);
 }
 
@@ -853,6 +853,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
               },
               options: {
                 responsive: true,
+                maintainAspectRatio: false, // Höhe kommt jetzt vom .chart-wrap-div, nicht mehr vom canvas-Seitenverhältnis
                 plugins: { legend: { labels: { usePointStyle: true, pointStyle: 'line', color: cc.text } } },
                 scales: {
                   x: { ticks: { color: cc.text, maxRotation: 45, minRotation: 30, autoSkip: true, maxTicksLimit: 10 }, grid: { color: cc.grid } },
@@ -872,6 +873,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
               },
               options: {
                 responsive: true,
+                maintainAspectRatio: false, // Höhe kommt jetzt vom .chart-wrap-div, nicht mehr vom canvas-Seitenverhältnis
                 plugins: { legend: { labels: { usePointStyle: true, pointStyle: 'line', color: cc.text } } },
                 scales: {
                   x: { ticks: { color: cc.text, maxRotation: 45, minRotation: 30, autoSkip: true, maxTicksLimit: 10 }, grid: { color: cc.grid } },
@@ -888,6 +890,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
               },
               options: {
                 responsive: true,
+                maintainAspectRatio: false, // Höhe kommt jetzt vom .chart-wrap-div, nicht mehr vom canvas-Seitenverhältnis
                 plugins: { legend: { labels: { color: cc.text } } },
                 scales: {
                   x: { ticks: { color: cc.text, maxRotation: 45, minRotation: 30, autoSkip: true, maxTicksLimit: 10 }, grid: { color: cc.grid } },
@@ -895,6 +898,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                     beginAtZero: true, max: 1,
                     ticks: {
                       color: cc.text, stepSize: 1,
+                      autoSkip: false,
                       callback: function(value) { return value === 1 ? 'AN' : 'AUS'; }
                     },
                     grid: { color: cc.grid }
@@ -1285,8 +1289,9 @@ const char CSS_CONTENT[] PROGMEM = R"rawliteral(
     form { margin: 20px 0; }
     /* Chart-Hintergrund folgt jetzt dem Theme; die Achsen-/Legendenfarben
        werden zusätzlich im JS gesetzt, da Chart.js diese nicht aus CSS liest. */
-    canvas { background: var(--chart-bg); border: 1px solid var(--chart-border); margin-bottom: 20px; }
-    .hidden { display: none !important; }
+    canvas { background: var(--chart-bg); border: 1px solid var(--chart-border); }
+.chart-wrap { position: relative; width: 100%; margin-bottom: 20px; }
+.hidden { display: none !important; }
 
     button, input[type='submit'], input[type='button'], .button-link {
       background-color: var(--button-bg);
@@ -1470,9 +1475,9 @@ String getDashboardHtml() {
           "<option value='720|3'>30 Tage</option>"
           "</select>"
           "</form>";
-  html += "<canvas id='chart' width='400' height='100'></canvas>";
-  html += "<canvas id='chart_humidity' width='400' height='70'></canvas>";
-  html += "<canvas id='chart_status' width='400' height='30'></canvas>";
+  html += "<div class='chart-wrap' style='height:280px;'><canvas id='chart'></canvas></div>";
+  html += "<div class='chart-wrap' style='height:200px;'><canvas id='chart_humidity'></canvas></div>";
+  html += "<div class='chart-wrap' style='height:100px;'><canvas id='chart_status'></canvas></div>";
   html += "</div>";
   return html;
 }
@@ -1783,10 +1788,10 @@ void handleSetMQTT() {
 }
 
 void handleMQTTConfig() {
-  if (server.hasArg("server")) strncpy(mqttServer, server.arg("server").c_str(), sizeof(mqttServer));
+  if (server.hasArg("server")) server.arg("server").toCharArray(mqttServer, sizeof(mqttServer));
   if (server.hasArg("port")) mqttPort = server.arg("port").toInt();
-  if (server.hasArg("user")) strncpy(mqttUser, server.arg("user").c_str(), sizeof(mqttUser));
-  if (server.hasArg("pass")) strncpy(mqttPassword, server.arg("pass").c_str(), sizeof(mqttPassword));
+  if (server.hasArg("user")) server.arg("user").toCharArray(mqttUser, sizeof(mqttUser));
+  if (server.hasArg("pass")) server.arg("pass").toCharArray(mqttPassword, sizeof(mqttPassword));
 
   saveMQTTSettings();
   mqttClient.setServer(mqttServer, mqttPort);
@@ -1996,7 +2001,7 @@ void setupWiFi() {
   wm.setDebugOutput(false);
   wm.setTimeout(180);
   char hb[33];
-  strncpy(hb, hostname.c_str(), sizeof(hb));
+  hostname.toCharArray(hb, sizeof(hb));
   WiFiManagerParameter custom_hn("hn", "Hostname", hb, 32);
   wm.addParameter(&custom_hn);
 
@@ -2113,6 +2118,7 @@ void setupMQTT() {
   loadMQTTSettings();
   loadMQTTTopics();
   mqttClient.setServer(mqttServer, mqttPort);
+  mqttClient.setBufferSize(1024);
   mqttClient.setKeepAlive(60);
   // Kurzer Socket-Timeout (Default der Bibliothek: 15s): ist der Broker nicht
   // erreichbar, gibt ein Verbindungsversuch dadurch schneller auf, statt die
