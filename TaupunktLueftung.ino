@@ -40,6 +40,15 @@ bool debugMQTT = false; // Debug für MQTT Discovery
 #define DEFAULT_HOSTNAME "TaupunktLueftung"
 String hostname = DEFAULT_HOSTNAME;
 #define FIRMWARE_VERSION "v4.2"
+// Automatischer Cache-Buster für /style.css und /script.js, unabhängig von
+// FIRMWARE_VERSION: __DATE__/__TIME__ sind Standard-C++-Makros, die der
+// Compiler bei JEDEM Kompiliervorgang automatisch mit Datum/Uhrzeit des
+// Builds füllt - dadurch ändert sich der Cache-Buster garantiert bei jedem
+// einzelnen Flash, auch wenn FIRMWARE_VERSION mal vergessen wird
+// hochzuzählen (wie zuletzt geschehen: CSS/JS blieben dadurch trotz
+// geänderter Firmware im Browser-Cache hängen, u.a. Ursache für das
+// beobachtete "Zeitraum springt zurück"-Verhalten).
+#define BUILD_STAMP __DATE__ "-" __TIME__
 #define RELAY_LED_PIN 16
 #define STATUS_GREEN_PIN 2
 #define STATUS_RED_PIN 18
@@ -1576,7 +1585,7 @@ void handleRoot() {
                       // manuellem Cache-Leeren kam die aktuelle Seite). Ändert sich die
                       // Firmware-Version, ist die URL für den Browser "neu" und wird frisch
                       // geladen; bleibt die Version gleich, greift der Cache weiter normal.
-                      "<link rel='stylesheet' href='/style.css?v=" + String(FIRMWARE_VERSION) + "'></head><body>");
+                      "<link rel='stylesheet' href='/style.css?v=" + String(BUILD_STAMP) + "'></head><body>");
   server.sendContent("<h1 style='display:inline-block;'>" + String(NAME) + " " + String(FIRMWARE_VERSION) + " Interface</h1>");
   server.sendContent("<span style='float:right;'>"
                       "<label for='themeSelect'>Design:</label> "
@@ -1599,7 +1608,7 @@ void handleRoot() {
   // Kommentar bei MAIN_SCRIPT_JS und handleScriptJS(). ?v=FIRMWARE_VERSION
   // als Cache-Buster, siehe Kommentar bei /style.css oben.
   server.sendContent("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>");
-  server.sendContent("<script src='/script.js?v=" + String(FIRMWARE_VERSION) + "'></script>");
+  server.sendContent("<script src='/script.js?v=" + String(BUILD_STAMP) + "'></script>");
 
   server.sendContent("</body></html>");
   server.sendContent("");
