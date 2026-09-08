@@ -1387,7 +1387,13 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
           e.preventDefault();
           const data = new FormData(form);
           fetch(form.action, { method: "POST", body: new URLSearchParams(data) })
-            .then(() => { alert(successMessage); })
+            .then(res => {
+              if (res.ok) {
+                alert(successMessage);
+              } else {
+                res.text().then(msg => alert("Fehler: " + msg));
+              }
+            })
             .catch(err => { console.error("AJAX-Fehler:", err); });
         });
       }
@@ -2377,16 +2383,6 @@ void setupWebServer() {
       server.send(200, "text/plain", "OK");
     } else {
       server.send(400, "text/plain", "Missing prefix");
-    }
-  });
-  server.on("/rediscovery", []() {
-    if (!requireAuth()) return;
-    if (mqttClient.connected()) {
-      publishMQTTDiscovery();
-      mqttClient.publish("homeassistant/status", "online", true);
-      server.send(200, "text/plain", "Discovery gesendet.");
-    } else {
-      server.send(500, "text/plain", "MQTT nicht verbunden.");
     }
   });
   server.on("/hostname", HTTP_POST, []() { if (requireAuth()) handleHostnameUpdate(); });
