@@ -1247,6 +1247,16 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
 
       window.onload = () => {
         openFirmwareModalUI.listenerAdded = false;
+              
+        // Gespeicherten Zeitraum VOR dem ersten showTab()/updateChart()-Aufruf
+        // wiederherstellen, damit gleich beim Laden der richtige Zeitraum
+        // gezeichnet wird, statt kurz auf "10 Minuten" zu springen.
+        const rangeSel = document.getElementById('rangeSelector');
+        const savedRange = localStorage.getItem('chartRange');
+        if (rangeSel && savedRange && [...rangeSel.options].some(o => o.value === savedRange)) {
+          rangeSel.value = savedRange;
+        }
+
         const savedTab = localStorage.getItem("stayOnSettings") === "true" ? "settings" : "dashboard";
         localStorage.removeItem("stayOnSettings");
         showTab(savedTab);
@@ -1543,7 +1553,7 @@ String getDashboardHtml() {
   html += "<p><strong>Letztes Ereignis:</strong> " + logEintrag + "</p>";
   html += "<form id='rangeForm' onsubmit='return false;'>"
           "<label><strong>Zeitraum:</strong></label> "
-          "<select id='rangeSelector' onchange='updateChart()'>"
+          "<select id='rangeSelector' onchange=\"localStorage.setItem('chartRange', this.value); updateChart();\">"
           "<option value='0.1|1'>10 Minuten</option>"
           "<option value='0.5|1'>30 Minuten</option>"
           "<option value='1|1'>1 Stunde</option>"
