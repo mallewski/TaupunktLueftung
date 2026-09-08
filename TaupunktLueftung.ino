@@ -13,7 +13,18 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 
-struct Akkumulator; 
+struct Akkumulator;
+
+// Explizite Forward-Declarations: Bei einer .ino-Datei dieser Größe mit
+// mehreren großen Raw-String-Literalen (R"rawliteral(...)") für JS/CSS/HTML
+// kann Arduinos automatische Prototyp-Erkennung (ctags-basiert, versteht
+// Raw-Strings nicht wirklich) vereinzelt "durcheinanderkommen" und einzelne
+// spätere Funktionsdefinitionen nicht mehr als solche erkennen. Explizite
+// Deklarationen hier machen das unabhängig davon zuverlässig.
+String getDashboardHtml();
+String getSettingsHtml();
+String getFirmwareModalHtml();
+void prepareForFirmwareUpdate();
 
 //Flash löschen !! löscht ALLE gespeicherten Daten im NVS (inkl. WiFi und Preferences)
 //#define DEBUG_ERASE_NVS   // aktivieren zum Löschen des Flash/NVS 
@@ -828,6 +839,57 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         }
       }
 
+      // Maximale Punktzahl, die tatsächlich sinnvoll auf einem Mobil-Bildschirm
+      // unterscheidbar ist. Deutlich unter der Pixelbreite eines Telefon-Displays,
+      // damit nie mehr als ein Punkt pro Pixel gezeichnet wird.
+      const MAX_CHART_POINTS = 300;
+
+      // Verdichtet für die Anzeige weiter, falls mehr Rohpunkte vorliegen, als
+      // sinnvoll darstellbar sind - genau nach demselben Prinzip wie die
+      // Tier2/Tier3-Speicherung auf dem Gerät selbst (Durchschnitt der
+      // Durchschnitte, aber Minimum der Minima / Maximum der Maxima). Das ist
+      // rein clientseitig zur Laufzeit, ändert nichts an den gespeicherten
+      // Rohdaten auf dem ESP32, und verliert dabei nachweislich KEINEN
+      // Extremwert - egal wie oft man diese Verdichtung verschachtelt, bleibt
+      // das globale Minimum/Maximum exakt erhalten. Das behebt das "wilde
+      // Zickzack" bei sehr vielen Punkten (z.B. 1440 Tier2-Punkte in der
+      // 24h-Ansicht), ohne die zugrunde liegende Datenbasis zu verändern.
+      function verdichteFuerAnzeige(punkte, effektivesIntervallSek) {
+        if (punkte.length <= MAX_CHART_POINTS) {
+          return { data: punkte, intervallSek: effektivesIntervallSek };
+        }
+        const bucketGroesse = Math.ceil(punkte.length / MAX_CHART_POINTS);
+        const avg = (bucket, feld) => {
+          const werte = bucket.map(p => p[feld]).filter(v => v !== null && v !== undefined);
+          return werte.length ? werte.reduce((a, b) => a + b, 0) / werte.length : null;
+        };
+        const minVon = (bucket, feld) => {
+          const werte = bucket.map(p => p[feld]).filter(v => v !== null && v !== undefined);
+          return werte.length ? Math.min(...werte) : null;
+        };
+        const maxVon = (bucket, feld) => {
+          const werte = bucket.map(p => p[feld]).filter(v => v !== null && v !== undefined);
+          return werte.length ? Math.max(...werte) : null;
+        };
+        const verdichtet = [];
+        for (let i = 0; i < punkte.length; i += bucketGroesse) {
+          const bucket = punkte.slice(i, i + bucketGroesse);
+          verdichtet.push({
+            td_in: avg(bucket, 'td_in'),
+            td_out: avg(bucket, 'td_out'),
+            diff: avg(bucket, 'diff'),
+            diff_min: minVon(bucket, 'diff_min'),
+            diff_max: maxVon(bucket, 'diff_max'),
+            rh_in: avg(bucket, 'rh_in'),
+            rh_in_min: minVon(bucket, 'rh_in_min'),
+            rh_in_max: maxVon(bucket, 'rh_in_max'),
+            rh_out: avg(bucket, 'rh_out'),
+            status: bucket.some(p => p.status === 1) ? 1 : 0
+          });
+        }
+        return { data: verdichtet, intervallSek: effektivesIntervallSek * bucketGroesse };
+      }
+
       async function updateChart() {
         try {
           const [rangeStr, tier] = document.getElementById('rangeSelector').value.split('|');
@@ -843,24 +905,28 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
           const totalPoints = Math.floor(range * pointsPerHour);
           const recent = d.slice(-totalPoints);
 
+          // Anzeige-Verdichtung: reduziert bei Bedarf die Punktzahl fürs
+          // Zeichnen, ohne Extremwerte zu verlieren (siehe verdichteFuerAnzeige).
+          const { data: plotData, intervallSek } = verdichteFuerAnzeige(recent, getIntervalInSeconds(tier));
+
           // Echte Zeitstempel für die X-Achse (Näherung anhand der lokalen
           // Uhrzeit: der letzte Punkt = "jetzt", die anderen entsprechend älter)
           const now = new Date();
-          const l = recent.map((_, i) => {
-            const secondsAgo = (recent.length - 1 - i) * getIntervalInSeconds(tier);
+          const l = plotData.map((_, i) => {
+            const secondsAgo = (plotData.length - 1 - i) * intervallSek;
             const timestamp = new Date(now.getTime() - secondsAgo * 1000);
             return formatTime(timestamp, tier);
           });
-          const tdIn = recent.map(p => p.td_in);
-          const tdOut = recent.map(p => p.td_out);
-          const diff = recent.map(p => p.diff);
-          const diffMin = recent.map(p => p.diff_min);
-          const diffMax = recent.map(p => p.diff_max);
-          const rhIn = recent.map(p => p.rh_in);
-          const rhInMin = recent.map(p => p.rh_in_min);
-          const rhInMax = recent.map(p => p.rh_in_max);
-          const rhOut = recent.map(p => p.rh_out);
-          const status = recent.map(p => p.status);
+          const tdIn = plotData.map(p => p.td_in);
+          const tdOut = plotData.map(p => p.td_out);
+          const diff = plotData.map(p => p.diff);
+          const diffMin = plotData.map(p => p.diff_min);
+          const diffMax = plotData.map(p => p.diff_max);
+          const rhIn = plotData.map(p => p.rh_in);
+          const rhInMin = plotData.map(p => p.rh_in_min);
+          const rhInMax = plotData.map(p => p.rh_in_max);
+          const rhOut = plotData.map(p => p.rh_out);
+          const status = plotData.map(p => p.status);
 
           const rhSollMin = ZIEL_RH - HYSTERESE;
           const rhSollMax = ZIEL_RH + HYSTERESE;
