@@ -892,10 +892,20 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
 
       async function updateChart() {
         try {
-          const [rangeStr, tier] = document.getElementById('rangeSelector').value.split('|');
+          const rangeSelectorEl = document.getElementById('rangeSelector');
+          const meineAuswahl = rangeSelectorEl.value;
+          const [rangeStr, tier] = meineAuswahl.split('|');
           const range = parseFloat(rangeStr);
           const r = await fetch('/chartdata?tier=' + tier);
           const d = await r.json();
+
+          // Läuft parallel zum manuellen Umschalten auch alle 5 Sekunden ein
+          // automatischer Refresh - ohne diese Prüfung kann eine ältere, noch
+          // nicht beantwortete Anfrage NACH einer neueren zurückkommen und das
+          // Diagramm kurz auf einen veralteten Zeitraum zurückwerfen (sichtbar
+          // als "hin- und herspringen" nach dem Umschalten). Hat sich die
+          // Auswahl seit Anfragestart geändert, wird diese Antwort verworfen.
+          if (rangeSelectorEl.value !== meineAuswahl) return;
 
           // Generisches Slicing für ALLE Tiers (vorher nur für Tier 1): ohne das
           // wurde "range" bei Tier 2/3 ignoriert (recent = d), wodurch "7 Tage"
