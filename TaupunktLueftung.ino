@@ -40,6 +40,7 @@ bool debugMQTT = false; // Debug für MQTT Discovery
 #define DEFAULT_HOSTNAME "TaupunktLueftung"
 String hostname = DEFAULT_HOSTNAME;
 #define FIRMWARE_VERSION "v4.2"
+
 // Automatischer Cache-Buster für /style.css und /script.js, unabhängig von
 // FIRMWARE_VERSION: __DATE__/__TIME__ sind Standard-C++-Makros, die der
 // Compiler bei JEDEM Kompiliervorgang automatisch mit Datum/Uhrzeit des
@@ -697,6 +698,13 @@ void reconnectMQTT() {
 
 void handleChartData() {
   String tier = server.hasArg("tier") ? server.arg("tier") : "1";
+  // Wie viele der neuesten Punkte tatsächlich gebraucht werden - ohne diesen
+  // Parameter (Rückwärtskompatibilität) wird wie bisher der komplette
+  // Tier-Puffer gesendet. Vermeidet, dass z.B. für "10 Minuten" trotzdem der
+  // komplette 1h-Tier1-Puffer (720 Punkte) übertragen wird, obwohl nur ein
+  // Bruchteil davon dargestellt wird - spart sowohl Erzeugungszeit auf dem
+  // ESP32 als auch Übertragungszeit übers WLAN.
+  int angefordert = server.hasArg("count") ? server.arg("count").toInt() : -1;
   auto f2 = [](int16_t v) {
     return v == HIST_NULL ? String("null") : String(v / 10.0, 1);
   };
@@ -707,8 +715,10 @@ void handleChartData() {
 
   auto sendeTier = [&](int16_t* ti, int16_t* to, int16_t* davg, int16_t* dmin, int16_t* dmax,
                         int16_t* riavg, int16_t* rimin, int16_t* rimax, int16_t* ro, bool* st, int n, int startIdx) {
-    for (int i = 0; i < n; i++) {
-      int idx = (startIdx + i) % n;
+    int anzahl = (angefordert > 0 && angefordert < n) ? angefordert : n;
+    int versatz = n - anzahl; // Startpunkt so weit nach vorn verschieben, dass nur die letzten "anzahl" Punkte drankommen
+    for (int i = 0; i < anzahl; i++) {
+      int idx = (startIdx + versatz + i) % n;
       String entry = "";
       if (i > 0) entry += ",";
       entry += "{\"td_in\":" + f2(ti[idx]) + ",\"td_out\":" + f2(to[idx]) + ",";
@@ -905,7 +915,17 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
           const meineAuswahl = rangeSelectorEl.value;
           const [rangeStr, tier] = meineAuswahl.split('|');
           const range = parseFloat(rangeStr);
-          const r = await fetch('/chartdata?tier=' + tier);
+
+          // Vor dem Fetch berechnen, damit der Server von vornherein nur die
+          // tatsächlich benötigten Punkte erzeugt und überträgt, statt immer
+          // den kompletten Tier-Puffer zu schicken (der Client hat den Rest
+          // bisher ohnehin sofort wieder verworfen - reine Verschwendung an
+          // Erzeugungs- und Übertragungszeit, besonders bei kurzen Zeiträumen
+          // wie "10 Minuten" innerhalb des 1h-Tier1-Puffers).
+          const pointsPerHour = 3600 / getIntervalInSeconds(tier);
+          const totalPoints = Math.floor(range * pointsPerHour);
+
+          const r = await fetch('/chartdata?tier=' + tier + '&count=' + totalPoints);
           const d = await r.json();
 
           // Läuft parallel zum manuellen Umschalten auch alle 5 Sekunden ein
@@ -916,12 +936,9 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
           // Auswahl seit Anfragestart geändert, wird diese Antwort verworfen.
           if (rangeSelectorEl.value !== meineAuswahl) return;
 
-          // Generisches Slicing für ALLE Tiers (vorher nur für Tier 1): ohne das
-          // wurde "range" bei Tier 2/3 ignoriert (recent = d), wodurch "7 Tage"
-          // und "30 Tage" identisch den kompletten 30-Tage-Puffer zeigten, weil
-          // beide Optionen intern Tier 3 verwenden.
-          const pointsPerHour = 3600 / getIntervalInSeconds(tier);
-          const totalPoints = Math.floor(range * pointsPerHour);
+          // Der Server liefert mit "count" bereits nur noch die benötigten
+          // Punkte - das Slicing hier bleibt trotzdem als Absicherung stehen
+          // (z.B. falls "count" mal ohne aktualisierte Firmware ignoriert wird).
           const recent = d.slice(-totalPoints);
 
           // Anzeige-Verdichtung: reduziert bei Bedarf die Punktzahl fürs
@@ -966,7 +983,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                 labels: l,
                 datasets: [
                   { label: '', data: diffMin, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', fill: false, pointRadius: 0, order: 3 },
-                  { label: 'Differenz-Spannweite (Min-Max)', data: diffMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(255,140,0,0.18)', fill: '-1', pointRadius: 0, order: 3 },
+                  { label: 'Differenz-Spannweite (Min-Max)', data: diffMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(255,140,0,0.08)', fill: '-1', pointRadius: 0, order: 3 },
                   { label: 'Taupunkt Innen', data: tdIn, borderColor: COLOR_TD_IN, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'Taupunkt Außen', data: tdOut, borderColor: COLOR_TD_OUT, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'Differenz', data: diff, borderColor: COLOR_DIFF, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
@@ -991,7 +1008,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                 labels: l,
                 datasets: [
                   { label: '', data: rhInMin, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', fill: false, pointRadius: 0, order: 3 },
-                  { label: 'RH Innen-Spannweite (Min-Max)', data: rhInMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,128,128,0.18)', fill: '-1', pointRadius: 0, order: 3 },
+                  { label: 'RH Innen-Spannweite (Min-Max)', data: rhInMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,128,128,0.08)', fill: '-1', pointRadius: 0, order: 3 },
                   { label: 'RH Innen', data: rhIn, borderColor: 'teal', borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'RH Außen', data: rhOut, borderColor: 'purple', borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'Zielband +', data: Array(l.length).fill(FEUCHTEREGELUNG_AKTIV ? rhSollMax : null), borderDash: [5, 5], borderColor: COLOR_SCHWELL, borderWidth: 1, fill: false, pointStyle: 'circle', pointRadius: 0, order: 2},
@@ -1332,7 +1349,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
 
       window.onload = () => {
         openFirmwareModalUI.listenerAdded = false;
-              
+
         // Gespeicherten Zeitraum VOR dem ersten showTab()/updateChart()-Aufruf
         // wiederherstellen, damit gleich beim Laden der richtige Zeitraum
         // gezeichnet wird, statt kurz auf "10 Minuten" zu springen.
