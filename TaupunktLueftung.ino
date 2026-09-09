@@ -39,7 +39,7 @@ bool debugMQTT = false; // Debug für MQTT Discovery
 #define NAME "TaupunktLueftung"
 #define DEFAULT_HOSTNAME "TaupunktLueftung"
 String hostname = DEFAULT_HOSTNAME;
-#define FIRMWARE_VERSION "v4.2"
+#define FIRMWARE_VERSION "v4.3"
 
 // Automatischer Cache-Buster für /style.css und /script.js, unabhängig von
 // FIRMWARE_VERSION: __DATE__/__TIME__ sind Standard-C++-Makros, die der
@@ -154,7 +154,7 @@ int     t1_index = 0;
 int16_t t2_td_in[TIER2_POINTS], t2_td_out[TIER2_POINTS];
 int16_t t2_diff_avg[TIER2_POINTS], t2_diff_min[TIER2_POINTS], t2_diff_max[TIER2_POINTS];
 int16_t t2_rh_in_avg[TIER2_POINTS], t2_rh_in_min[TIER2_POINTS], t2_rh_in_max[TIER2_POINTS];
-int16_t t2_rh_out[TIER2_POINTS];
+int16_t t2_rh_out[TIER2_POINTS], t2_rh_out_min[TIER2_POINTS], t2_rh_out_max[TIER2_POINTS];
 bool    t2_status[TIER2_POINTS];
 int     t2_index = 0;
 unsigned long t2_letzterEintrag = 0;
@@ -165,7 +165,7 @@ unsigned long t2_letzterEintrag = 0;
 int16_t t3_td_in[TIER3_POINTS], t3_td_out[TIER3_POINTS];
 int16_t t3_diff_avg[TIER3_POINTS], t3_diff_min[TIER3_POINTS], t3_diff_max[TIER3_POINTS];
 int16_t t3_rh_in_avg[TIER3_POINTS], t3_rh_in_min[TIER3_POINTS], t3_rh_in_max[TIER3_POINTS];
-int16_t t3_rh_out[TIER3_POINTS];
+int16_t t3_rh_out[TIER3_POINTS], t3_rh_out_min[TIER3_POINTS], t3_rh_out_max[TIER3_POINTS];
 bool    t3_status[TIER3_POINTS];
 int     t3_index = 0;
 unsigned long t3_letzterEintrag = 0;
@@ -176,7 +176,8 @@ struct Akkumulator {
   float min_diff = 999;
   float max_diff = -999; // wichtig für die positive Schwelle (diff >= Schwellwert schaltet die Lüftung ein);
                           // min_diff bleibt für die negative Schwelle (diff <= -Schwellwert, "Befeuchtend"-Anzeige)
-  float summe_rh_in = 0, min_rh_in = 999, max_rh_in = -999, summe_rh_out = 0;
+  float summe_rh_in = 0, min_rh_in = 999, max_rh_in = -999;
+  float summe_rh_out = 0, min_rh_out = 999, max_rh_out = -999;
   int anzahl = 0;
   bool warAktiv = false;
 };
@@ -229,6 +230,8 @@ void akkumuliere(Akkumulator &a, float ti, float to, float diff, float ri, float
   a.min_rh_in = min(a.min_rh_in, ri);
   a.max_rh_in = max(a.max_rh_in, ri);
   a.summe_rh_out += ro;
+  a.min_rh_out = min(a.min_rh_out, ro);
+  a.max_rh_out = max(a.max_rh_out, ro);
   a.anzahl++;
   if (aktiv) a.warAktiv = true;
 }
@@ -264,6 +267,8 @@ void historieAktualisieren() {
     t2_rh_in_min[t2_index] = toI16(akkuTier2.min_rh_in);
     t2_rh_in_max[t2_index] = toI16(akkuTier2.max_rh_in);
     t2_rh_out[t2_index] = toI16(avg_ro);
+    t2_rh_out_min[t2_index] = toI16(akkuTier2.min_rh_out);
+    t2_rh_out_max[t2_index] = toI16(akkuTier2.max_rh_out);
     t2_status[t2_index] = akkuTier2.warAktiv;
     t2_index = (t2_index + 1) % TIER2_POINTS;
 
@@ -272,6 +277,8 @@ void historieAktualisieren() {
     akkuTier3.max_diff = max(akkuTier3.max_diff, akkuTier2.max_diff);
     akkuTier3.min_rh_in = min(akkuTier3.min_rh_in, akkuTier2.min_rh_in);
     akkuTier3.max_rh_in = max(akkuTier3.max_rh_in, akkuTier2.max_rh_in);
+    akkuTier3.min_rh_out = min(akkuTier3.min_rh_out, akkuTier2.min_rh_out);
+    akkuTier3.max_rh_out = max(akkuTier3.max_rh_out, akkuTier2.max_rh_out);
 
     akkuTier2 = Akkumulator();
 
@@ -286,6 +293,8 @@ void historieAktualisieren() {
       t3_rh_in_min[t3_index] = toI16(akkuTier3.min_rh_in);
       t3_rh_in_max[t3_index] = toI16(akkuTier3.max_rh_in);
       t3_rh_out[t3_index] = toI16(akkuTier3.summe_rh_out / akkuTier3.anzahl);
+      t3_rh_out_min[t3_index] = toI16(akkuTier3.min_rh_out);
+      t3_rh_out_max[t3_index] = toI16(akkuTier3.max_rh_out);
       t3_status[t3_index] = akkuTier3.warAktiv;
       t3_index = (t3_index + 1) % TIER3_POINTS;
       akkuTier3 = Akkumulator();
@@ -697,6 +706,12 @@ void reconnectMQTT() {
 }
 
 void handleChartData() {
+  // Zeitmessung + Heap-Status für den seriellen Log: damit beim nächsten
+  // Auftreten einer langsamen/fehlgeschlagenen Anfrage echte Werte vorliegen,
+  // statt weiter zu vermuten, wo die Zeit hingeht.
+  unsigned long tStart = millis();
+  uint32_t heapVorher = ESP.getFreeHeap();
+
   String tier = server.hasArg("tier") ? server.arg("tier") : "1";
   // Wie viele der neuesten Punkte tatsächlich gebraucht werden - ohne diesen
   // Parameter (Rückwärtskompatibilität) wird wie bisher der komplette
@@ -713,32 +728,58 @@ void handleChartData() {
   server.send(200, "application/json", "");
   server.sendContent("[");
 
+  int gesendetePunkte = 0;
+  int gesendeteBloecke = 0;
+
   auto sendeTier = [&](int16_t* ti, int16_t* to, int16_t* davg, int16_t* dmin, int16_t* dmax,
-                        int16_t* riavg, int16_t* rimin, int16_t* rimax, int16_t* ro, bool* st, int n, int startIdx) {
+                        int16_t* riavg, int16_t* rimin, int16_t* rimax, int16_t* ro, int16_t* romin, int16_t* romax, bool* st, int n, int startIdx) {
     int anzahl = (angefordert > 0 && angefordert < n) ? angefordert : n;
     int versatz = n - anzahl; // Startpunkt so weit nach vorn verschieben, dass nur die letzten "anzahl" Punkte drankommen
+    gesendetePunkte = anzahl;
+
+    // Mehrere Punkte zu einem Block bündeln, bevor tatsächlich gesendet wird:
+    // Vorher löste JEDER einzelne Punkt einen eigenen server.sendContent()-Aufruf
+    // aus - bei bis zu 1440 Punkten also 1440 einzelne TCP-Sendevorgänge mit
+    // jeweils vollem Protokoll-Overhead für nur ~135 Bytes Nutzdaten. Das war
+    // der Hauptgrund für die spürbar lange Ladezeit. Gleiche Datenmenge,
+    // deutlich weniger Einzel-Sendevorgänge.
+    const int BLOCK_GROESSE = 40;
+    String block = "";
+    block.reserve(BLOCK_GROESSE * 170); // vermeidet wiederholtes Nachvergrößern des Blocks selbst
+
     for (int i = 0; i < anzahl; i++) {
       int idx = (startIdx + versatz + i) % n;
-      String entry = "";
-      if (i > 0) entry += ",";
-      entry += "{\"td_in\":" + f2(ti[idx]) + ",\"td_out\":" + f2(to[idx]) + ",";
-      entry += "\"diff\":" + f2(davg[idx]) + ",\"diff_min\":" + f2(dmin[idx]) + ",\"diff_max\":" + f2(dmax[idx]) + ",";
-      entry += "\"rh_in\":" + f2(riavg[idx]) + ",\"rh_in_min\":" + f2(rimin[idx]) + ",\"rh_in_max\":" + f2(rimax[idx]) + ",";
-      entry += "\"rh_out\":" + f2(ro[idx]) + ",\"status\":" + String(st[idx] ? 1 : 0) + "}";
-      server.sendContent(entry);
+      if (i > 0) block += ",";
+      block += "{\"td_in\":" + f2(ti[idx]) + ",\"td_out\":" + f2(to[idx]) + ",";
+      block += "\"diff\":" + f2(davg[idx]) + ",\"diff_min\":" + f2(dmin[idx]) + ",\"diff_max\":" + f2(dmax[idx]) + ",";
+      block += "\"rh_in\":" + f2(riavg[idx]) + ",\"rh_in_min\":" + f2(rimin[idx]) + ",\"rh_in_max\":" + f2(rimax[idx]) + ",";
+      block += "\"rh_out\":" + f2(ro[idx]) + ",\"rh_out_min\":" + f2(romin[idx]) + ",\"rh_out_max\":" + f2(romax[idx]) + ",";
+      block += "\"status\":" + String(st[idx] ? 1 : 0) + "}";
+
+      if ((i + 1) % BLOCK_GROESSE == 0 || i == anzahl - 1) {
+        server.sendContent(block);
+        gesendeteBloecke++;
+        block = "";
+      }
     }
   };
 
   if (tier == "2") {
-    sendeTier(t2_td_in, t2_td_out, t2_diff_avg, t2_diff_min, t2_diff_max, t2_rh_in_avg, t2_rh_in_min, t2_rh_in_max, t2_rh_out, t2_status, TIER2_POINTS, t2_index);
+    sendeTier(t2_td_in, t2_td_out, t2_diff_avg, t2_diff_min, t2_diff_max, t2_rh_in_avg, t2_rh_in_min, t2_rh_in_max, t2_rh_out, t2_rh_out_min, t2_rh_out_max, t2_status, TIER2_POINTS, t2_index);
   } else if (tier == "3") {
-    sendeTier(t3_td_in, t3_td_out, t3_diff_avg, t3_diff_min, t3_diff_max, t3_rh_in_avg, t3_rh_in_min, t3_rh_in_max, t3_rh_out, t3_status, TIER3_POINTS, t3_index);
+    sendeTier(t3_td_in, t3_td_out, t3_diff_avg, t3_diff_min, t3_diff_max, t3_rh_in_avg, t3_rh_in_min, t3_rh_in_max, t3_rh_out, t3_rh_out_min, t3_rh_out_max, t3_status, TIER3_POINTS, t3_index);
   } else {
-    sendeTier(t1_td_in, t1_td_out, t1_diff, t1_diff, t1_diff, t1_rh_in, t1_rh_in, t1_rh_in, t1_rh_out, t1_status, TIER1_POINTS, t1_index);
+    sendeTier(t1_td_in, t1_td_out, t1_diff, t1_diff, t1_diff, t1_rh_in, t1_rh_in, t1_rh_in, t1_rh_out, t1_rh_out, t1_rh_out, t1_status, TIER1_POINTS, t1_index);
   }
 
   server.sendContent("]");
   server.sendContent("");
+
+  unsigned long dauerMs = millis() - tStart;
+  uint32_t heapNachher = ESP.getFreeHeap();
+  int32_t heapDiff = (int32_t)heapNachher - (int32_t)heapVorher;
+  Serial.printf("[chartdata] tier=%s count=%d Punkte=%d Bloecke=%d Dauer=%lums FreeHeap vorher=%u nachher=%u Diff=%d\n",
+                tier.c_str(), angefordert, gesendetePunkte, gesendeteBloecke, dauerMs, heapVorher, heapNachher, heapDiff);
 }
 
 void handleLiveData() {
@@ -903,10 +944,46 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
             rh_in_min: minVon(bucket, 'rh_in_min'),
             rh_in_max: maxVon(bucket, 'rh_in_max'),
             rh_out: avg(bucket, 'rh_out'),
+            rh_out_min: minVon(bucket, 'rh_out_min'),
+            rh_out_max: maxVon(bucket, 'rh_out_max'),
             status: bucket.some(p => p.status === 1) ? 1 : 0
           });
         }
         return { data: verdichtet, intervallSek: effektivesIntervallSek * bucketGroesse };
+      }
+
+      // Wie oft sich die aktuell ausgewählte Zeitspanne überhaupt sinnvoll neu
+      // laden muss: Tier 1 (Rohdaten) ändert sich alle 5s, Tier 2 (Minuten-
+      // Mittelwerte) nur einmal pro Minute, Tier 3 (Stunden-Mittelwerte) nur
+      // einmal pro Stunde. Bisher lief IMMER ein 5s-Intervall, wodurch z.B.
+      // die 24h-Ansicht den kompletten (~194 KB großen) Datensatz zwölfmal
+      // öfter neu abgerufen und geparst hat, als sich die Daten überhaupt
+      // ändern - unnötig langsam, und auf leistungsschwächeren Mobilgeräten
+      // (weniger CPU/RAM als ein Desktop-Browser) mit der Zeit spürbar
+      // störend, da die Garbage Collection dem wiederholten Verarbeiten
+      // großer JSON-Antworten hinterherhinkt.
+      function getChartRefreshIntervalMs(tier) {
+        if (tier === '2') return 60000;   // 1 Minute
+        if (tier === '3') return 300000;  // 5 Minuten (Daten ändern sich nur stündlich)
+        return 5000;                      // Tier 1: echte 5s-Rohdaten
+      }
+
+      function scheduleChartRefresh() {
+        // Eventuell noch laufenden, mit dem ALTEN Takt geplanten Timer
+        // verwerfen - sonst würde ein manueller Wechsel auf eine schnellere
+        // Zeitspanne (z.B. von "30 Tage" auf "1 Stunde") bis zu 5 Minuten
+        // brauchen, bis der Hintergrund-Refresh den neuen, schnelleren Takt
+        // übernimmt. Die ID wird bewusst als Eigenschaft an der Funktion
+        // selbst gespeichert (wie schon bei openFirmwareModalUI.listenerAdded)
+        // statt in einer neuen globalen Variable direkt vor dieser Funktion -
+        // das hat zuvor Arduinos automatische Prototyp-Erkennung durcheinandergebracht.
+        if (scheduleChartRefresh.timeoutId) clearTimeout(scheduleChartRefresh.timeoutId);
+
+        const [, tier] = document.getElementById('rangeSelector').value.split('|');
+        scheduleChartRefresh.timeoutId = setTimeout(async () => {
+          await updateChart();
+          scheduleChartRefresh();
+        }, getChartRefreshIntervalMs(tier));
       }
 
       async function updateChart() {
@@ -962,6 +1039,8 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
           const rhInMin = plotData.map(p => p.rh_in_min);
           const rhInMax = plotData.map(p => p.rh_in_max);
           const rhOut = plotData.map(p => p.rh_out);
+          const rhOutMin = plotData.map(p => p.rh_out_min);
+          const rhOutMax = plotData.map(p => p.rh_out_max);
           const status = plotData.map(p => p.status);
 
           const rhSollMin = ZIEL_RH - HYSTERESE;
@@ -983,7 +1062,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                 labels: l,
                 datasets: [
                   { label: '', data: diffMin, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', fill: false, pointRadius: 0, order: 3 },
-                  { label: 'Differenz-Spannweite (Min-Max)', data: diffMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(255,140,0,0.08)', fill: '-1', pointRadius: 0, order: 3 },
+                  { label: 'Differenz-Spannweite (Min-Max)', data: diffMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(255,140,0,0.4)', fill: '-1', pointRadius: 0, order: 3 },
                   { label: 'Taupunkt Innen', data: tdIn, borderColor: COLOR_TD_IN, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'Taupunkt Außen', data: tdOut, borderColor: COLOR_TD_OUT, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'Differenz', data: diff, borderColor: COLOR_DIFF, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
@@ -1008,7 +1087,9 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                 labels: l,
                 datasets: [
                   { label: '', data: rhInMin, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', fill: false, pointRadius: 0, order: 3 },
-                  { label: 'RH Innen-Spannweite (Min-Max)', data: rhInMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,128,128,0.08)', fill: '-1', pointRadius: 0, order: 3 },
+                  { label: 'RH Innen-Spannweite (Min-Max)', data: rhInMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,128,128,0.4)', fill: '-1', pointRadius: 0, order: 3 },
+                  { label: '', data: rhOutMin, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', fill: false, pointRadius: 0, order: 3 },
+                  { label: 'RH Außen-Spannweite (Min-Max)', data: rhOutMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(128,0,128,0.4)', fill: '-1', pointRadius: 0, order: 3 },
                   { label: 'RH Innen', data: rhIn, borderColor: 'teal', borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'RH Außen', data: rhOut, borderColor: 'purple', borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'Zielband +', data: Array(l.length).fill(FEUCHTEREGELUNG_AKTIV ? rhSollMax : null), borderDash: [5, 5], borderColor: COLOR_SCHWELL, borderWidth: 1, fill: false, pointStyle: 'circle', pointRadius: 0, order: 2},
@@ -1066,10 +1147,12 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
             chart_humidity.data.labels = l;
             chart_humidity.data.datasets[0].data = rhInMin;
             chart_humidity.data.datasets[1].data = rhInMax;
-            chart_humidity.data.datasets[2].data = rhIn;
-            chart_humidity.data.datasets[3].data = rhOut;
-            chart_humidity.data.datasets[4].data = Array(l.length).fill(FEUCHTEREGELUNG_AKTIV ? rhSollMax : null);
-            chart_humidity.data.datasets[5].data = Array(l.length).fill(FEUCHTEREGELUNG_AKTIV ? rhSollMin : null);
+            chart_humidity.data.datasets[2].data = rhOutMin;
+            chart_humidity.data.datasets[3].data = rhOutMax;
+            chart_humidity.data.datasets[4].data = rhIn;
+            chart_humidity.data.datasets[5].data = rhOut;
+            chart_humidity.data.datasets[6].data = Array(l.length).fill(FEUCHTEREGELUNG_AKTIV ? rhSollMax : null);
+            chart_humidity.data.datasets[7].data = Array(l.length).fill(FEUCHTEREGELUNG_AKTIV ? rhSollMin : null);
             chart_humidity.update('none');
 
             chart_status.data.labels = l;
@@ -1367,7 +1450,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         if (themeSel) themeSel.value = localStorage.getItem('theme') || 'system';
 
         setInterval(updateLiveData, 5000);
-        setInterval(updateChart, 5000);
+        scheduleChartRefresh();
         ajaxFormHandler("tempschutzForm", "Temperaturschutz gespeichert.");
         ajaxFormHandler("austrocknungsschutzForm", "Austrocknungsschutz gespeichert.");
         ajaxFormHandler("feuchteregelungForm", "Feuchteregelung gespeichert.");
@@ -1661,7 +1744,7 @@ String getDashboardHtml() {
   html += "<p><strong>Letztes Ereignis:</strong> " + logEintrag + "</p>";
   html += "<form id='rangeForm' onsubmit='return false;'>"
           "<label><strong>Zeitraum:</strong></label> "
-          "<select id='rangeSelector' onchange=\"localStorage.setItem('chartRange', this.value); updateChart();\">"
+          "<select id='rangeSelector' onchange=\"localStorage.setItem('chartRange', this.value); updateChart(); scheduleChartRefresh();\">"
           "<option value='0.1|1'>10 Minuten</option>"
           "<option value='0.5|1'>30 Minuten</option>"
           "<option value='1|1'>1 Stunde</option>"
@@ -2320,12 +2403,12 @@ void setupPreferences() {
   }
   for (int i = 0; i < TIER2_POINTS; i++) {
     t2_td_in[i] = t2_td_out[i] = t2_diff_avg[i] = t2_diff_min[i] = t2_diff_max[i] = HIST_NULL;
-    t2_rh_in_avg[i] = t2_rh_in_min[i] = t2_rh_in_max[i] = t2_rh_out[i] = HIST_NULL;
+    t2_rh_in_avg[i] = t2_rh_in_min[i] = t2_rh_in_max[i] = t2_rh_out[i] = t2_rh_out_min[i] = t2_rh_out_max[i] = HIST_NULL;
     t2_status[i] = false;
   }
   for (int i = 0; i < TIER3_POINTS; i++) {
     t3_td_in[i] = t3_td_out[i] = t3_diff_avg[i] = t3_diff_min[i] = t3_diff_max[i] = HIST_NULL;
-    t3_rh_in_avg[i] = t3_rh_in_min[i] = t3_rh_in_max[i] = t3_rh_out[i] = HIST_NULL;
+    t3_rh_in_avg[i] = t3_rh_in_min[i] = t3_rh_in_max[i] = t3_rh_out[i] = t3_rh_out_min[i] = t3_rh_out_max[i] = HIST_NULL;
     t3_status[i] = false;
   }
 }
@@ -2485,6 +2568,21 @@ void handleSensorzyklus() {
   }
 }
 
+// Alle 60s Heap/WLAN-Status ins Serial-Log - macht einen schleichenden Abfall
+// des freien Speichers (z.B. durch Heap-Fragmentierung über eine längere
+// Sitzung hinweg) oder unbemerkte WLAN-Neuverbindungen sichtbar, statt nur
+// den Moment einer einzelnen langsamen Anfrage zu sehen.
+void handleDiagnoseLog() {
+  static unsigned long letzteAusgabe = 0;
+  if (millis() - letzteAusgabe < 60000) return;
+  letzteAusgabe = millis();
+  Serial.printf("[diag] FreeHeap=%u MinFreeHeap=%u WiFi=%s RSSI=%d Uptime=%lus\n",
+                ESP.getFreeHeap(), ESP.getMinFreeHeap(),
+                WiFi.status() == WL_CONNECTED ? "verbunden" : "GETRENNT",
+                WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0,
+                millis() / 1000);
+}
+
 // >>> LOOP
 void loop() {
   if (updateModeActive) {
@@ -2507,10 +2605,12 @@ void loop() {
     handleMQTT();
     handleWebServer();
     handleSensorzyklus();
+    handleDiagnoseLog();
     return;
   }
 
   handleMQTT();
   handleWebServer();
   handleSensorzyklus();
+  handleDiagnoseLog();
 }
