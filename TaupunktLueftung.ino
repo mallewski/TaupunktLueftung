@@ -1571,9 +1571,20 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         fetch('/debugsettings', { method: 'POST', body: new URLSearchParams(new FormData(form)) }).then(() => {
           const aktiv = document.getElementById('debug_aktiv').checked;
           document.getElementById('debugKategorien').classList.toggle('hidden', !aktiv);
+          document.getElementById('debugLeerenWrap').classList.toggle('hidden', !aktiv);
           document.getElementById('debugAusgabe').classList.toggle('hidden', !aktiv);
           if (aktiv) startDebugPolling(); else stopDebugPolling();
         });
+      }
+
+      async function leereDebugAusgabe() {
+        try {
+          await fetch('/debugclear', { method: 'POST' });
+          const el = document.getElementById('debugAusgabe');
+          if (el) el.textContent = ''; // sofortiges Feedback, statt auf den nächsten Poll zu warten
+        } catch (e) {
+          console.error("Debug-Log-Leeren-Fehler:", e);
+        }
       }
 
       async function updateDebugLog() {
@@ -2075,6 +2086,8 @@ String getSettingsHtml() {
   }
   html += "</div>";
   html += "</form>";
+  html += "<p class='" + String(debugModusAktiv ? "" : "hidden") + "' id='debugLeerenWrap'>"
+          "<button type='button' onclick='leereDebugAusgabe()'>Ausgabe leeren</button></p>";
   html += "<pre id='debugAusgabe' class='" + String(debugModusAktiv ? "" : "hidden") + "' "
           "style='max-height:240px; overflow-y:auto; background:var(--input-bg); border:1px solid var(--border); "
           "padding:8px; font-size:0.85em; white-space:pre-wrap;'></pre>";
@@ -2298,6 +2311,16 @@ void handleDebugSettings() {
   debugKatChartdata = server.hasArg("kat_chartdata");
   debugKatDiag = server.hasArg("kat_diag");
   debugKatAuth = server.hasArg("kat_auth");
+  server.send(200, "text/plain", "OK");
+}
+
+// Setzt den Ringpuffer zurück - die alten Zeilen bleiben zwar bis zum
+// Überschreiben noch im RAM stehen, werden aber nicht mehr ausgegeben. So
+// zeigt der nächste Poll sofort einen leeren Stand, statt die alten Einträge
+// nach dem Klick gleich wieder anzuzeigen.
+void handleDebugClear() {
+  debugPufferAnzahl = 0;
+  debugPufferIndex = 0;
   server.send(200, "text/plain", "OK");
 }
 
@@ -2647,6 +2670,7 @@ void setupWebServer() {
   server.on("/mqttdiscovery", HTTP_POST, []() { if (requireAuth()) handleMQTTDiscovery(); });
   server.on("/debuglog", []() { if (requireAuth()) handleDebugLog(); });
   server.on("/debugsettings", HTTP_POST, []() { if (requireAuth()) handleDebugSettings(); });
+  server.on("/debugclear", HTTP_POST, []() { if (requireAuth()) handleDebugClear(); });
   server.on("/mqttdiscoveryprefix", HTTP_POST, []() {
     if (!requireAuth()) return;
     if (server.hasArg("mqtt_discovery_prefix")) {
