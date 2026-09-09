@@ -26,6 +26,15 @@ String getSettingsHtml();
 String getFirmwareModalHtml();
 void prepareForFirmwareUpdate();
 
+// DebugKategorie muss VOR den Funktionen bekannt sein, die sie als Parameter
+// nutzen (debugKategorieAktiv/debugPush) - sonst scheitert Arduinos
+// automatische Prototyp-Erkennung, da sie ihre Prototypen ganz oben in der
+// Datei einfügt, an einer Stelle vor der eigentlichen enum-Definition weiter
+// unten im Code.
+enum DebugKategorie { KAT_SENSOR, KAT_MQTT, KAT_CHARTDATA, KAT_DIAG, KAT_AUTH };
+bool debugKategorieAktiv(DebugKategorie kat);
+void debugPush(DebugKategorie kat, String msg);
+
 //Flash löschen !! löscht ALLE gespeicherten Daten im NVS (inkl. WiFi und Preferences)
 //#define DEBUG_ERASE_NVS   // aktivieren zum Löschen des Flash/NVS 
 #ifdef DEBUG_ERASE_NVS
@@ -184,6 +193,53 @@ struct Akkumulator {
 Akkumulator akkuTier2;
 Akkumulator akkuTier3;
 
+// ===== Debug-Log fürs Webinterface =====
+// Ergänzt die bestehenden Serial-Ausgaben um einen kleinen Ringpuffer im RAM,
+// der über die Einstellungsseite abrufbar ist - für Diagnose ohne USB-Kabel/
+// seriellen Monitor griffbereit zu haben. Bewusst nur die Kategorien, die
+// tatsächlich während einer laufenden Verbindung zum Webinterface auftreten
+// können (Boot-Ablauf/WLAN-Verbindungsaufbau passiert VOR dem Start des
+// Webservers und wäre dort ohnehin nie zu sehen). Enum-Definition (siehe oben
+// bei den Forward-Declarations) und diese Variablen/Funktionen gehören
+// zusammen, sind aber aus Compiler-Gründen getrennt.
+
+bool debugModusAktiv = false;
+bool debugKatSensor = false;
+bool debugKatMqtt = false;
+bool debugKatChartdata = false;
+bool debugKatDiag = false;
+bool debugKatAuth = false;
+
+#define DEBUG_PUFFER_ZEILEN 60
+String debugPuffer[DEBUG_PUFFER_ZEILEN];
+int debugPufferIndex = 0;
+int debugPufferAnzahl = 0; // wie viele Zeilen tatsächlich befüllt sind (< DEBUG_PUFFER_ZEILEN direkt nach dem Boot)
+
+bool debugKategorieAktiv(DebugKategorie kat) {
+  if (!debugModusAktiv) return false;
+  switch (kat) {
+    case KAT_SENSOR:    return debugKatSensor;
+    case KAT_MQTT:       return debugKatMqtt;
+    case KAT_CHARTDATA: return debugKatChartdata;
+    case KAT_DIAG:        return debugKatDiag;
+    case KAT_AUTH:        return debugKatAuth;
+  }
+  return false;
+}
+
+// Schreibt zusätzlich zur ohnehin vorhandenen Serial-Ausgabe (unverändert an
+// jeder bisherigen Stelle) in den Ringpuffer - aber NUR, wenn Debugmodus und
+// die jeweilige Kategorie aktiv sind. So bleibt der kleine Puffer nicht sofort
+// von einer einzelnen, sehr häufig feuernden Kategorie (z.B. chartdata)
+// zugemüllt, wenn die eigentlich interessiert.
+void debugPush(DebugKategorie kat, String msg) {
+  if (!debugKategorieAktiv(kat)) return;
+  debugPuffer[debugPufferIndex] = getUhrzeit() + " " + msg;
+  debugPufferIndex = (debugPufferIndex + 1) % DEBUG_PUFFER_ZEILEN;
+  if (debugPufferAnzahl < DEBUG_PUFFER_ZEILEN) debugPufferAnzahl++;
+}
+
+
 String statusText = "Unbekannt";
 bool lueftungAktiv = false;
 String logEintrag = "";
@@ -313,6 +369,7 @@ void aktualisiereSensoren() {
 
     if (isnan(t_in) || isnan(rh_in)) {
       Serial.println("SHT31 innen liefert NAN – versuche Re-Init...");
+      debugPush(KAT_SENSOR, "SHT31 innen liefert NAN – versuche Re-Init...");
       if (shtInnen.begin(0x44)) {
         delay(20);
         float temp = shtInnen.readTemperature();
@@ -321,11 +378,14 @@ void aktualisiereSensoren() {
           t_in = temp;
           rh_in = hum;
           Serial.println("SHT31 innen Re-Init erfolgreich.");
+          debugPush(KAT_SENSOR, "SHT31 innen Re-Init erfolgreich.");
         } else {
           Serial.println("SHT31 innen Re-Init fehlgeschlagen (Werte weiterhin NAN).");
+          debugPush(KAT_SENSOR, "SHT31 innen Re-Init fehlgeschlagen (Werte weiterhin NAN).");
         }
       } else {
         Serial.println("SHT31 innen Re-Init fehlgeschlagen (begin() false).");
+        debugPush(KAT_SENSOR, "SHT31 innen Re-Init fehlgeschlagen (begin() false).");
       }
     }
   }
@@ -341,13 +401,16 @@ void aktualisiereSensoren() {
 
     if (isnan(t_out) || isnan(rh_out)) {
       Serial.println("SHT31 außen liefert NAN – versuche Re-Init...");
+      debugPush(KAT_SENSOR, "SHT31 außen liefert NAN – versuche Re-Init...");
       if (shtAussen.begin(0x45)) {
         delay(20);
         t_out = shtAussen.readTemperature();
         rh_out = shtAussen.readHumidity();
         Serial.println("SHT31 außen Re-Init erfolgreich.");
+        debugPush(KAT_SENSOR, "SHT31 außen Re-Init erfolgreich.");
       } else {
         Serial.println("SHT31 außen Re-Init fehlgeschlagen.");
+        debugPush(KAT_SENSOR, "SHT31 außen Re-Init fehlgeschlagen.");
       }
     }
   }
@@ -362,6 +425,7 @@ void aktualisiereSensoren() {
 
     if (isnan(t_out) || isnan(rh_out)) {
       Serial.println("DHT22 liefert NAN – versuche Re-Init...");
+      debugPush(KAT_SENSOR, "DHT22 liefert NAN – versuche Re-Init...");
       dht.begin();
       delay(100);
       float temp = dht.readTemperature();
@@ -370,8 +434,10 @@ void aktualisiereSensoren() {
         t_out = temp;
         rh_out = hum;
         Serial.println("DHT22 Re-Init erfolgreich.");
+        debugPush(KAT_SENSOR, "DHT22 Re-Init erfolgreich.");
       } else {
         Serial.println("DHT22 Re-Init fehlgeschlagen (Werte weiterhin NAN).");
+        debugPush(KAT_SENSOR, "DHT22 Re-Init fehlgeschlagen (Werte weiterhin NAN).");
       }
     }
   }
@@ -384,6 +450,7 @@ void aktualisiereSensoren() {
   if (sensorFehlerInnen) {
     td_in = NAN;
     Serial.println("Sensorfehler INNEN erkannt!");
+    debugPush(KAT_SENSOR, "Sensorfehler INNEN erkannt!");
   } else {
     td_in = berechneTaupunkt(t_in, rh_in);
   }
@@ -391,6 +458,7 @@ void aktualisiereSensoren() {
   if (sensorFehlerAussen) {
     td_out = NAN;
     Serial.println("Sensorfehler AUSSEN erkannt!");
+    debugPush(KAT_SENSOR, "Sensorfehler AUSSEN erkannt!");
   } else {
     td_out = berechneTaupunkt(t_out, rh_out);
   }
@@ -539,6 +607,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String val;
   for (unsigned int i = 0; i < length; i++) val += (char)payload[i];
   Serial.println("MQTT RX: topic='" + String(topic) + "' payload='" + val + "'");
+  debugPush(KAT_MQTT, "MQTT RX: topic='" + String(topic) + "' payload='" + val + "'");
   Serial.println("Erwartet mqttTempInnen='" + mqttTempInnen + "'");
   float fval = val.toFloat();
   if (String(topic) == mqttTempInnen) mqtt_t_in = fval;
@@ -688,10 +757,12 @@ void reconnectMQTT() {
                                   // mitzählen, damit direkt danach kein doppelter Auto-Versuch folgt
   while (!mqttClient.connected()) {
     Serial.print("MQTT verbinden mit: "); Serial.println(mqttServer);
+    debugPush(KAT_MQTT, "MQTT verbinden mit: " + String(mqttServer));
     if (mqttClient.connect(NAME, mqttUser, mqttPassword, (mqttPublishPrefix + "availability").c_str(), 1, true, "offline" )) {
       delay(500);
       resubscribeMQTTTopics();
       Serial.println("MQTT verbunden.");
+      debugPush(KAT_MQTT, "MQTT verbunden.");
       delay(500);
       publishMQTTDiscovery();
       mqttClient.publish("homeassistant/status", "online", true);
@@ -699,6 +770,7 @@ void reconnectMQTT() {
     } else {
       Serial.print("MQTT-Verbindung fehlgeschlagen. Code: ");
       Serial.println(mqttClient.state());
+      debugPush(KAT_MQTT, "MQTT-Verbindung fehlgeschlagen. Code: " + String(mqttClient.state()));
       break;
     }
   }
@@ -780,6 +852,8 @@ void handleChartData() {
   int32_t heapDiff = (int32_t)heapNachher - (int32_t)heapVorher;
   Serial.printf("[chartdata] tier=%s count=%d Punkte=%d Bloecke=%d Dauer=%lums FreeHeap vorher=%u nachher=%u Diff=%d\n",
                 tier.c_str(), angefordert, gesendetePunkte, gesendeteBloecke, dauerMs, heapVorher, heapNachher, heapDiff);
+  debugPush(KAT_CHARTDATA, "tier=" + tier + " count=" + String(angefordert) + " Punkte=" + String(gesendetePunkte) +
+            " Bloecke=" + String(gesendeteBloecke) + " Dauer=" + String(dauerMs) + "ms Heap-Diff=" + String(heapDiff));
 }
 
 void handleLiveData() {
@@ -838,14 +912,14 @@ void redirectToSettings() {
 
 void handleReboot() {
   server.send(200, "text/plain", "Neustart wird durchgeführt...");
-  logEvent("Neustart über Weboberfläche ausgelöst");
+  Serial.println("Neustart über Weboberfläche ausgelöst");
   delay(500);
   ESP.restart();
 }
 
 void handleWifiReset() {
   server.send(200, "text/plain", "WLAN-Zugangsdaten werden gelöscht, Gerät startet neu...");
-  logEvent("WLAN-Reset über Weboberfläche ausgelöst");
+  Serial.println("WLAN-Reset über Weboberfläche ausgelöst");
   delay(500);
 
   WiFiManager wm;
@@ -855,6 +929,13 @@ void handleWifiReset() {
 
 bool requireAuth() {
   if (!server.authenticate(configUsername, configPassword)) {
+    // Nur echte Fehlversuche loggen (Client hat Zugangsdaten mitgeschickt,
+    // die aber falsch waren) - nicht die ganz normale allererste Anfrage
+    // eines Browsers ohne Authorization-Header, die jeder Seitenaufruf ohne
+    // gespeicherte Zugangsdaten zwangsläufig einmal auslöst.
+    if (server.hasHeader("Authorization")) {
+      debugPush(KAT_AUTH, "Fehlgeschlagener Login-Versuch von " + server.client().remoteIP().toString());
+    }
     server.requestAuthentication(BASIC_AUTH, "TaupunktLueftung");
     return false;
   }
@@ -1062,7 +1143,7 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                 labels: l,
                 datasets: [
                   { label: '', data: diffMin, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', fill: false, pointRadius: 0, order: 3 },
-                  { label: 'Differenz-Spannweite (Min-Max)', data: diffMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(255,140,0,0.4)', fill: '-1', pointRadius: 0, order: 3 },
+                  { label: 'Differenz-Spannweite (Min-Max)', data: diffMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(255,140,0,0.3)', fill: '-1', pointRadius: 0, order: 3 },
                   { label: 'Taupunkt Innen', data: tdIn, borderColor: COLOR_TD_IN, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'Taupunkt Außen', data: tdOut, borderColor: COLOR_TD_OUT, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'Differenz', data: diff, borderColor: COLOR_DIFF, borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
@@ -1087,9 +1168,9 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
                 labels: l,
                 datasets: [
                   { label: '', data: rhInMin, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', fill: false, pointRadius: 0, order: 3 },
-                  { label: 'RH Innen-Spannweite (Min-Max)', data: rhInMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,128,128,0.4)', fill: '-1', pointRadius: 0, order: 3 },
+                  { label: 'RH Innen-Spannweite (Min-Max)', data: rhInMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,128,128,0.3)', fill: '-1', pointRadius: 0, order: 3 },
                   { label: '', data: rhOutMin, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', fill: false, pointRadius: 0, order: 3 },
-                  { label: 'RH Außen-Spannweite (Min-Max)', data: rhOutMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(128,0,128,0.4)', fill: '-1', pointRadius: 0, order: 3 },
+                  { label: 'RH Außen-Spannweite (Min-Max)', data: rhOutMax, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(128,0,128,0.3)', fill: '-1', pointRadius: 0, order: 3 },
                   { label: 'RH Innen', data: rhIn, borderColor: 'teal', borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'RH Außen', data: rhOut, borderColor: 'purple', borderWidth: 2, fill: false, pointStyle: 'circle', pointRadius: 0, order: 1},
                   { label: 'Zielband +', data: Array(l.length).fill(FEUCHTEREGELUNG_AKTIV ? rhSollMax : null), borderDash: [5, 5], borderColor: COLOR_SCHWELL, borderWidth: 1, fill: false, pointStyle: 'circle', pointRadius: 0, order: 2},
@@ -1461,6 +1542,9 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         ajaxFormHandler("mqttTopicsForm", "MQTT Topics gespeichert.");
         ajaxFormHandler("discoveryForm", "MQTT Discovery gesendet.");
         ajaxFormHandler("discoveryPrefixForm", "Discovery Prefix gespeichert.");
+
+        const debugAktivEl = document.getElementById('debug_aktiv');
+        if (debugAktivEl && debugAktivEl.checked) startDebugPolling();
       };
 
       function ajaxFormHandler(formId, successMessage = "Gespeichert!") {
@@ -1480,6 +1564,49 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
             .catch(err => { console.error("AJAX-Fehler:", err); });
         });
       }
+
+      // ===== Debug-Ausgabe =====
+      function submitDebugSettings() {
+        const form = document.getElementById('debugForm');
+        fetch('/debugsettings', { method: 'POST', body: new URLSearchParams(new FormData(form)) }).then(() => {
+          const aktiv = document.getElementById('debug_aktiv').checked;
+          document.getElementById('debugKategorien').classList.toggle('hidden', !aktiv);
+          document.getElementById('debugAusgabe').classList.toggle('hidden', !aktiv);
+          if (aktiv) startDebugPolling(); else stopDebugPolling();
+        });
+      }
+
+      async function updateDebugLog() {
+        // Nur abfragen, solange die Einstellungsseite tatsächlich sichtbar ist -
+        // sonst würde unnötig weiter gepollt, während z.B. das Dashboard offen ist.
+        const settingsTab = document.getElementById('settingsTab');
+        if (!settingsTab || settingsTab.classList.contains('hidden')) return;
+        try {
+          const res = await fetch('/debuglog');
+          const text = await res.text();
+          const el = document.getElementById('debugAusgabe');
+          if (el) el.textContent = text;
+        } catch (e) {
+          console.error("Debug-Log-Fehler:", e);
+        }
+      }
+
+      // Intervall-ID an der Funktion selbst gespeichert (wie schon bei
+      // scheduleChartRefresh/openFirmwareModalUI) statt in einer neuen
+      // globalen Variable - vermeidet erneut Arduinos fragile Prototyp-Erkennung.
+      function startDebugPolling() {
+        if (startDebugPolling.intervalId) return;
+        updateDebugLog();
+        startDebugPolling.intervalId = setInterval(updateDebugLog, 3000);
+      }
+
+      function stopDebugPolling() {
+        if (startDebugPolling.intervalId) {
+          clearInterval(startDebugPolling.intervalId);
+          startDebugPolling.intervalId = null;
+        }
+      }
+
   )rawliteral";
 
 const char CSS_CONTENT[] PROGMEM = R"rawliteral(
@@ -1920,6 +2047,39 @@ String getSettingsHtml() {
           "Danach mit einem Smartphone/PC mit dem Netz „TaupunktLueftung-Setup“ verbinden, um ein neues WLAN einzurichten – wie bei der Ersteinrichtung.</p>";
   html += "</fieldset>";
 
+  // Debug-Ausgabe: Master-Toggle blendet die Kategorien + Log-Anzeige ein.
+  // Bewusst nur die Kategorien, die tatsächlich auftreten können, während
+  // diese Seite offen ist (kein Boot-/WLAN-Verbindungsablauf, keine Firmware-
+  // Update-Ereignisse - während eines Updates ersetzt das JS die komplette
+  // Seite durch die Wartemeldung, das Debug-Panel wäre währenddessen ohnehin
+  // nicht sichtbar).
+  html += "<fieldset><legend>Debug</legend>";
+  html += "<form id='debugForm' onchange='submitDebugSettings()'>";
+  html += "<label title='Zeigt laufend aktualisierte Diagnose-Meldungen direkt hier im Browser an, ohne USB-Kabel/seriellen Monitor.'>"
+          "<input type='checkbox' id='debug_aktiv' name='debug_aktiv'";
+  html += debugModusAktiv ? " checked" : "";
+  html += "> Debugmodus aktivieren</label><br>";
+  html += "<div id='debugKategorien' class='" + String(debugModusAktiv ? "" : "hidden") + "' style='margin:8px 0;'>";
+  struct { const char* id; const char* label; bool aktiv; const char* hinweis; } kategorien[] = {
+    {"kat_sensor", "Sensor", debugKatSensor, "Re-Init-Versuche und NAN-Fehler bei den Sensoren."},
+    {"kat_mqtt", "MQTT", debugKatMqtt, "Empfangene Nachrichten, Verbindungsversuche, Discovery-Status."},
+    {"kat_chartdata", "Chartdata", debugKatChartdata, "Zeitmessung und Heap-Verbrauch bei jedem Chart-Abruf."},
+    {"kat_diag", "Diag", debugKatDiag, "Periodischer Heap-/WLAN-Status, alle 60 Sekunden."},
+    {"kat_auth", "Auth", debugKatAuth, "Fehlgeschlagene Login-Versuche inkl. IP-Adresse."}
+  };
+  for (auto &k : kategorien) {
+    html += "<label style='margin-right:14px;' title='" + String(k.hinweis) + "'>"
+            "<input type='checkbox' name='" + String(k.id) + "'";
+    if (k.aktiv) html += " checked";
+    html += "> " + String(k.label) + "</label>";
+  }
+  html += "</div>";
+  html += "</form>";
+  html += "<pre id='debugAusgabe' class='" + String(debugModusAktiv ? "" : "hidden") + "' "
+          "style='max-height:240px; overflow-y:auto; background:var(--input-bg); border:1px solid var(--border); "
+          "padding:8px; font-size:0.85em; white-space:pre-wrap;'></pre>";
+  html += "</fieldset>";
+
   html += "<p align='center'>";
   html += "<a href='https://github.com/mallewski/TaupunktLueftung' target='_blank' "
         "style='display:inline-block;text-decoration:none;padding:6px 12px;"
@@ -2102,11 +2262,45 @@ void handleMQTTDiscovery() {
   if (mqttClient.connected()) {
     publishMQTTDiscovery();
     Serial.println("MQTT ist verbunden. Sende Discovery...");
+    debugPush(KAT_MQTT, "MQTT ist verbunden. Sende Discovery...");
   } else {
     Serial.println("MQTT NICHT verbunden – keine Discovery gesendet.");
+    debugPush(KAT_MQTT, "MQTT NICHT verbunden - keine Discovery gesendet.");
   }
   redirectToSettings();
 }
+
+// Liefert den aktuellen Ringpuffer-Inhalt als reinen Text, neueste Zeile
+// zuerst. Kein JSON nötig - wird direkt in ein <pre>/<textarea> auf der
+// Einstellungsseite geschrieben.
+void handleDebugLog() {
+  String out;
+  if (!debugModusAktiv) {
+    out = "(Debugmodus ist deaktiviert)";
+  } else if (debugPufferAnzahl == 0) {
+    out = "(Noch keine Einträge - passende Kategorie aktiv und warten, bis etwas passiert)";
+  } else {
+    for (int i = 0; i < debugPufferAnzahl; i++) {
+      int idx = (debugPufferIndex - 1 - i + DEBUG_PUFFER_ZEILEN * 2) % DEBUG_PUFFER_ZEILEN;
+      out += debugPuffer[idx] + "\n";
+    }
+  }
+  server.send(200, "text/plain", out);
+}
+
+// Setzt Debugmodus + Kategorien anhand der übermittelten Checkbox-Werte.
+// Bewusst nicht in NVS gespeichert: reine Laufzeit-Diagnoseeinstellung, soll
+// nach einem Neustart nicht "vergessen aktiv" bleiben.
+void handleDebugSettings() {
+  debugModusAktiv = server.hasArg("debug_aktiv");
+  debugKatSensor = server.hasArg("kat_sensor");
+  debugKatMqtt = server.hasArg("kat_mqtt");
+  debugKatChartdata = server.hasArg("kat_chartdata");
+  debugKatDiag = server.hasArg("kat_diag");
+  debugKatAuth = server.hasArg("kat_auth");
+  server.send(200, "text/plain", "OK");
+}
+
 
 void handleHostnameUpdate() {
   if (server.hasArg("hostname")) {
@@ -2120,7 +2314,7 @@ void handleHostnameUpdate() {
       WiFi.setHostname(hostname.c_str());
       MDNS.end();
       MDNS.begin(hostname.c_str());
-      logEvent("Hostname geändert auf: " + hostname);
+      Serial.println("Hostname geändert auf: " + hostname);
     }
   }
 
@@ -2157,7 +2351,7 @@ void handleSetUsername() {
   prefs.putString("web_user", neu);
   prefs.end();
 
-  logEvent("Webinterface-Benutzername geändert auf: " + neu);
+  Serial.println("Webinterface-Benutzername geändert auf: " + neu);
   server.send(200, "text/plain", "OK");
 }
 
@@ -2183,7 +2377,7 @@ void handleSetPassword() {
   prefs.putString("web_pass", neu);
   prefs.end();
 
-  logEvent("Webinterface-Passwort geändert");
+  Serial.println("Webinterface-Passwort geändert");
   server.send(200, "text/plain", "OK");
 }
 
@@ -2224,7 +2418,7 @@ void prepareForFirmwareUpdate() {
   mqttClient.disconnect();
   mqttAktiv = false;
   updateModeActive = true;
-  logEvent("Firmware-Update vorbereitet. Dienste deaktiviert.");
+  Serial.println("Firmware-Update vorbereitet. Dienste deaktiviert.");
 }
 
 void handleFirmwareBackup() {
@@ -2256,7 +2450,7 @@ void handleFirmwareBackup() {
     offset += toRead;
   }
 
-  logEvent("Firmware-Backup heruntergeladen (" + String(size) + " Bytes)");
+  Serial.println("Firmware-Backup heruntergeladen (" + String(size) + " Bytes)");
 }
 
 // --- Setup --->
@@ -2372,7 +2566,7 @@ void setupPreferences() {
     prefs.putUInt("min_laufzeit", mindestLaufzeit_ms / 60000);
     prefs.putUInt("min_pause", mindestPause_ms / 60000);
     prefs.end();
-    logEvent("Lüfter-/Relais-Schutzzeiten aus altem Speicherformat migriert (min_on/min_off -> min_laufzeit/min_pause)");
+    Serial.println("Lüfter-/Relais-Schutzzeiten aus altem Speicherformat migriert (min_on/min_off -> min_laufzeit/min_pause)");
   }
 
   prefs.begin("config", true);
@@ -2451,6 +2645,8 @@ void setupWebServer() {
   server.on("/style.css", handleCSS);
   server.on("/script.js", handleScriptJS);
   server.on("/mqttdiscovery", HTTP_POST, []() { if (requireAuth()) handleMQTTDiscovery(); });
+  server.on("/debuglog", []() { if (requireAuth()) handleDebugLog(); });
+  server.on("/debugsettings", HTTP_POST, []() { if (requireAuth()) handleDebugSettings(); });
   server.on("/mqttdiscoveryprefix", HTTP_POST, []() {
     if (!requireAuth()) return;
     if (server.hasArg("mqtt_discovery_prefix")) {
@@ -2496,7 +2692,7 @@ void setupWebServer() {
     if (mqttAktiv) {
       reconnectMQTT();
     }
-    logEvent("Firmware-Update fehlgeschlagen. Dienste wiederhergestellt.");
+    Serial.println("Firmware-Update fehlgeschlagen. Dienste wiederhergestellt.");
 
     server.send(200, "text/html", R"rawliteral(
       <html><head><meta charset='UTF-8'><title>Update fehlgeschlagen</title><style>
@@ -2581,6 +2777,10 @@ void handleDiagnoseLog() {
                 WiFi.status() == WL_CONNECTED ? "verbunden" : "GETRENNT",
                 WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0,
                 millis() / 1000);
+  debugPush(KAT_DIAG, "FreeHeap=" + String(ESP.getFreeHeap()) + " MinFreeHeap=" + String(ESP.getMinFreeHeap()) +
+            " WiFi=" + String(WiFi.status() == WL_CONNECTED ? "verbunden" : "GETRENNT") +
+            " RSSI=" + String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0) +
+            " Uptime=" + String(millis() / 1000) + "s");
 }
 
 // >>> LOOP
