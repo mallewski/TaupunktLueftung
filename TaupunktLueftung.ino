@@ -1283,6 +1283,22 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         }
       }
 
+      // Intervall-ID an der Funktion selbst gespeichert (gleiches Muster wie
+      // scheduleChartRefresh/openFirmwareModalUI) statt in einer neuen
+      // globalen Variable.
+      function startLiveDataPolling() {
+        if (startLiveDataPolling.intervalId) return;
+        updateLiveData();
+        startLiveDataPolling.intervalId = setInterval(updateLiveData, 5000);
+      }
+
+      function stopLiveDataPolling() {
+        if (startLiveDataPolling.intervalId) {
+          clearInterval(startLiveDataPolling.intervalId);
+          startLiveDataPolling.intervalId = null;
+        }
+      }
+
       function resolveTheme(t) {
         if (t === 'system') {
           return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -1530,8 +1546,30 @@ const char MAIN_SCRIPT_JS[] PROGMEM = R"rawliteral(
         const themeSel = document.getElementById('themeSelect');
         if (themeSel) themeSel.value = localStorage.getItem('theme') || 'system';
 
-        setInterval(updateLiveData, 5000);
+        startLiveDataPolling();
         scheduleChartRefresh();
+
+        // Page Visibility API: pausiert das Polling komplett, sobald der Tab
+        // in den Hintergrund geht (z.B. Handy gesperrt, anderer Tab aktiv,
+        // Browser minimiert) - viele mobile Browser drosseln Hintergrund-Tabs
+        // nicht zuverlässig selbst, wodurch offene Tabs sonst dauerhaft weiter
+        // pollen, auch wenn niemand hinschaut. Bei mehreren offen gelassenen
+        // Geräten kann sich das gegenseitig verstärken und den (einsträngigen)
+        // Server durchgehend beschäftigt halten, ohne dass jemand aktiv
+        // das Interface nutzt.
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) {
+            stopLiveDataPolling();
+            if (scheduleChartRefresh.timeoutId) {
+              clearTimeout(scheduleChartRefresh.timeoutId);
+              scheduleChartRefresh.timeoutId = null;
+            }
+          } else {
+            startLiveDataPolling();
+            scheduleChartRefresh();
+          }
+        });
+
         ajaxFormHandler("tempschutzForm", "Temperaturschutz gespeichert.");
         ajaxFormHandler("austrocknungsschutzForm", "Austrocknungsschutz gespeichert.");
         ajaxFormHandler("feuchteregelungForm", "Feuchteregelung gespeichert.");
