@@ -2826,6 +2826,27 @@ void handleSensorzyklus() {
   }
 }
 
+// Ohne diese Prüfung bleibt das Gerät für immer offline, wenn der EINMALIGE
+// wm.autoConnect()-Versuch beim Boot fehlschlägt (z.B. weil nach einem
+// gemeinsamen Stromausfall der Router noch nicht wieder online war, während
+// der ESP32 schon hochgefahren ist) - die Steuerungslogik läuft in diesem
+// Fall völlig normal weiter (die hängt nicht am WLAN), nur das Webinterface
+// bleibt dauerhaft unerreichbar, weil nie ein weiterer Verbindungsversuch
+// unternommen wird. WiFi.reconnect() nutzt die zuletzt bekannten
+// Zugangsdaten, ohne den WiFiManager-Konfigurationsportal-Ablauf erneut
+// aufzurufen - kein blockierender AP-Modus, nur ein einfacher Reconnect-
+// Versuch. Gedrosselt auf alle 30s, analog zum bestehenden MQTT-Reconnect,
+// damit das nicht bei jedem loop()-Durchlauf erneut versucht wird.
+void handleWiFiReconnect() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  static unsigned long letzterWiFiVersuch = 0;
+  const unsigned long WIFI_RECONNECT_INTERVAL_MS = 30000;
+  if (millis() - letzterWiFiVersuch < WIFI_RECONNECT_INTERVAL_MS) return;
+  letzterWiFiVersuch = millis();
+  Serial.println("WLAN getrennt, versuche Reconnect...");
+  WiFi.reconnect();
+}
+
 // Alle 60s Heap/WLAN-Status ins Serial-Log - macht einen schleichenden Abfall
 // des freien Speichers (z.B. durch Heap-Fragmentierung über eine längere
 // Sitzung hinweg) oder unbemerkte WLAN-Neuverbindungen sichtbar, statt nur
@@ -2867,6 +2888,7 @@ void loop() {
     handleMQTT();
     handleWebServer();
     handleSensorzyklus();
+    handleWiFiReconnect();
     handleDiagnoseLog();
     return;
   }
@@ -2874,5 +2896,6 @@ void loop() {
   handleMQTT();
   handleWebServer();
   handleSensorzyklus();
+  handleWiFiReconnect();
   handleDiagnoseLog();
 }
