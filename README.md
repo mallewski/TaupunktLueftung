@@ -88,7 +88,7 @@ LEDs: Anode (langer Pin) → Vorwiderstand → GPIO / Kathode (kurzer Pin) → G
 
 Dieses Projekt unterstützt zwei Sensortypen für den Außensensor:
 
-- **SHT31 (empfohlen)** – digitaler I²C-Sensor, deutlich genauer und stabiler als der DHT22 (typisch ±2 % RH statt ±2–5 % RH beim DHT22), reagiert schneller auf Änderungen, liefert auch bei niedrigen Temperaturen zuverlässige Werte und hat mit I²C ein robusteres, weniger störanfälliges Übertragungsprotokoll als das proprietäre Single-Wire-Timing des DHT22. Für eine Regelung, die auf kleinen Taupunkt-Differenzen basiert, wirkt sich die höhere Sensorgenauigkeit direkt auf die Qualität der Lüftungsentscheidungen aus.
+- **SHT31 (empfohlen)** – digitaler I²C-Sensor, deutlich genauer und stabiler als der DHT22 (typisch ±2 % RH statt ±2–5 % RH beim DHT22), reagiert schneller auf Änderungen, liefert auch bei niedrigen Temperaturen zuverlässige Werte und hat mit I²C ein robusteres, weniger störanfälliges Übertragungsprotokoll als das proprietäre Single-Wire-Timing des DHT22. Für eine Regelung, die auf kleinen Taupunkt-Differenzen basiert, wirkt sich die höhere Sensorgenauigkeit direkt auf die Qualität der Lüftungsentscheidungen aus. Achtung! Das Kabel darf nicht länger als 1,5-2m sein, .
 - **DHT22** – günstiger, weniger genau, dafür simplere 3-Draht-Verkabelung ohne I²C-Adressierung.
 
 **Besonderheit bei zwei SHT31-Sensoren:** Da sowohl der Innen- als auch ein optionaler Außen-SHT31 über I²C angesprochen werden, können beide Sensoren am **gemeinsamen Bus** (SDA = GPIO21, SCL = GPIO22) betrieben werden – es sind keine zusätzlichen Datenleitungen nötig. Damit der ESP32 die beiden Sensoren trotzdem unterscheiden kann, besitzt der SHT31 einen `AD`- bzw. `ADR`-Pin zur Adressauswahl:
